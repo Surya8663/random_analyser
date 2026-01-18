@@ -6,65 +6,60 @@ class Settings(BaseSettings):
     # Application
     APP_NAME: str = "Vision-Fusion Document Intelligence"
     VERSION: str = "1.0.0"
-    DEBUG: bool = False
+    DEBUG: bool = True
     ENVIRONMENT: str = "development"
     
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    WORKERS: int = 4
+    WORKERS: int = 1
     
     # File Processing
     UPLOAD_DIR: str = "uploads"
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
-    ALLOWED_EXTENSIONS: List[str] = [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp"]
+    MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB
+    ALLOWED_EXTENSIONS: List[str] = [".pdf", ".png", ".jpg", ".jpeg", ".txt"]
     TEMP_DIR: str = "temp"
     
-    # OCR Settings
-    TESSERACT_PATH: Optional[str] = None
+    # OCR Settings (Optional)
     OCR_DPI: int = 300
-    OCR_CONFIDENCE_THRESHOLD: float = 0.7
-    
-    # YOLO Settings
-    YOLO_MODEL_PATH: str = "yolov8n.pt"
-    YOLO_CONFIDENCE_THRESHOLD: float = 0.5
-    YOLO_CLASSES: List[str] = [
-        "table", "chart", "figure", "signature", 
-        "logo", "stamp", "text_region", "header", "footer"
-    ]
-    
-    # Vector Database
-    QDRANT_HOST: str = "localhost"
-    QDRANT_PORT: int = 6333
-    QDRANT_COLLECTION: str = "document_embeddings"
-    
-    # Embeddings
-    TEXT_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
-    IMAGE_EMBEDDING_MODEL: str = "clip-ViT-B-32"
-    EMBEDDING_DIMENSION: int = 384
-    
-    # LLM Settings (Optional)
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_MODEL: str = "gpt-4"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "llama3"
+    OCR_CONFIDENCE_THRESHOLD: float = 0.6
     
     # Agent Settings
-    AGENT_CONFIDENCE_THRESHOLD: float = 0.6
-    CONTRADICTION_SEVERITY_THRESHOLD: float = 0.7
-    RISK_SCORE_THRESHOLD: float = 0.8
-    
-    # Cache
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    REDIS_TTL: int = 3600
+    AGENT_CONFIDENCE_THRESHOLD: float = 0.5
     
     # Monitoring
     LOG_LEVEL: str = "INFO"
-    METRICS_ENABLED: bool = True
     
+    # Make all other fields optional
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"  # Ignore extra env vars
 
-settings = Settings()
+# Create settings instance
+try:
+    settings = Settings()
+    print(f"✅ Configuration loaded: {settings.APP_NAME} v{settings.VERSION}")
+    print(f"📁 Upload directory: {settings.UPLOAD_DIR}")
+    print(f"🌐 Environment: {settings.ENVIRONMENT}")
+except Exception as e:
+    print(f"⚠️ Configuration warning: {e}")
+    print("Using default configuration")
+    
+    # Fallback
+    class MinimalSettings:
+        APP_NAME = "Vision-Fusion Document Intelligence"
+        VERSION = "1.0.0"
+        DEBUG = True
+        ENVIRONMENT = "development"
+        HOST = "0.0.0.0"
+        PORT = 8000
+        WORKERS = 1
+        UPLOAD_DIR = "uploads"
+        MAX_FILE_SIZE = 50 * 1024 * 1024
+        ALLOWED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".txt"]
+        TEMP_DIR = "temp"
+        LOG_LEVEL = "INFO"
+    
+    settings = MinimalSettings()

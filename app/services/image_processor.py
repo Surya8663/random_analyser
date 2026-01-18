@@ -3,7 +3,7 @@ import numpy as np
 from typing import List, Optional, Tuple, Dict, Any
 import os
 from PIL import Image
-from app.config import settings
+from app.core.config import settings
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)

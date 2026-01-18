@@ -1,0 +1,98 @@
+{
+  "success": true,
+  "document_id": "d4d5326d-0f7b-47e9-80a6-80c3c9635cc3",
+  "document_type": "unknown",
+  "extracted_fields": {
+    "entity_dates": {
+      "value": [
+        "2024-01-01"
+      ],
+      "confidence": 0.7,
+      "sources": [
+        "dates_extractor"
+      ],
+      "modalities": [
+        "textual"
+      ]
+    },
+    "entity_amounts": {
+      "value": [
+        "$1,000.00"
+      ],
+      "confidence": 0.7,
+      "sources": [
+        "amounts_extractor"
+      ],
+      "modalities": [
+        "textual"
+      ]
+    },
+    "entity_names": {
+      "value": [
+        "Test Company"
+      ],
+      "confidence": 0.7,
+      "sources": [
+        "names_extractor"
+      ],
+      "modalities": [
+        "textual"
+      ]
+    },
+    "document_info": {
+      "value": {
+        "document_id": "d4d5326d-0f7b-47e9-80a6-80c3c9635cc3",
+        "processed": true,
+        "timestamp": "2026-01-19T02:41:08.724900",
+        "file_path": "uploads\\2a10829a-618d-42b9-92fa-8a0bc3ff16ca\\original.pdf",
+        "pages": 1
+      },
+      "confidence": 1.0,
+      "sources": [
+        "system"
+      ],
+      "modalities": [
+        "metadata"
+      ]
+    }
+  },
+  "validation_results": {
+    "contradictions": [],
+    "risk_score": 0.3,
+    "integrity_score": 0.8
+  },
+  "explanations": {
+    "system": "Document processed successfully"
+  },
+  "recommendations": [
+    "No issues detected"
+  ],
+  "processing_metadata": {
+    "integrity_score": 0.8,
+    "total_pages": 1,
+    "agents_executed": [
+      "quality",
+      "classifier",
+      "layout",
+      "vision",
+      "charts",
+      "tables",
+      "signatures",
+      "ocr_reliability",
+      "entities",
+      "semantics",
+      "alignment",
+      "confidence",
+      "consistency",
+      "contradiction",
+      "risk",
+      "explanation",
+      "review"
+    ],
+    "processing_time": 0.001446,
+    "document_type": "unknown",
+    "errors_count": 0,
+    "fields_extracted": 4
+  },
+  "errors": []
+}
