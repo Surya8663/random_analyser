@@ -1,4 +1,4 @@
-# ui_app.py
+# ui_app.py - FIXED VERSION
 import streamlit as st
 import requests
 import time
@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
 import uuid
+from pathlib import Path
 
 # Page configuration
 st.set_page_config(
@@ -109,29 +110,6 @@ st.markdown("""
         font-weight: 600;
     }
     
-    /* Cards */
-    .feature-card {
-        background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%);
-        border: 1px solid rgba(79, 70, 229, 0.2);
-        border-radius: 12px;
-        padding: 25px;
-        margin-bottom: 20px;
-        transition: all 0.3s ease;
-        cursor: pointer;
-    }
-    
-    .feature-card:hover {
-        transform: translateY(-4px);
-        border-color: rgba(79, 70, 229, 0.4);
-        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
-    }
-    
-    .feature-card .icon {
-        font-size: 40px;
-        margin-bottom: 15px;
-        display: block;
-    }
-    
     /* Status badges */
     .status-badge {
         display: inline-block;
@@ -160,8 +138,52 @@ st.markdown("""
     
     /* Sidebar improvements */
     [data-testid="stSidebar"] {
-        min-width: 300px !important;
-        max-width: 350px !important;
+        min-width: 280px !important;
+        max-width: 300px !important;
+    }
+    
+    /* Upload area styling */
+    .upload-area {
+        border: 2px dashed #4f46e5;
+        border-radius: 12px;
+        padding: 60px 40px;
+        text-align: center;
+        background: rgba(79, 70, 229, 0.05);
+        transition: all 0.3s ease;
+        cursor: pointer;
+        margin: 20px 0;
+    }
+    
+    .upload-area:hover {
+        border-color: #6366f1;
+        background: rgba(79, 70, 229, 0.1);
+    }
+    
+    .upload-area.dragover {
+        border-color: #10b981;
+        background: rgba(16, 185, 129, 0.1);
+    }
+    
+    /* File cards */
+    .file-card {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px 0;
+        display: flex;
+        align-items: center;
+        transition: all 0.2s ease;
+    }
+    
+    .file-card:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(79, 70, 229, 0.5);
+    }
+    
+    .file-icon {
+        font-size: 24px;
+        margin-right: 12px;
     }
     
     /* Section dividers */
@@ -186,20 +208,29 @@ class DocumentIntelligenceUI:
         except:
             return False
     
-    def upload_document(self, file_bytes: bytes, filename: str) -> Optional[str]:
-        """Upload document to backend"""
+    def upload_documents(self, files: List[bytes], filenames: List[str]) -> Optional[List[str]]:
+        """Upload multiple documents to backend"""
         try:
-            files = {'file': (filename, file_bytes)}
-            response = requests.post(UPLOAD_ENDPOINT, files=files)
+            uploaded_ids = []
+            for file_bytes, filename in zip(files, filenames):
+                files_dict = {'file': (filename, file_bytes)}
+                response = requests.post(UPLOAD_ENDPOINT, files=files_dict)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    document_id = data.get('document_id')
+                    uploaded_ids.append(document_id)
+                else:
+                    st.error(f"Upload failed for {filename}: {response.text}")
+                    return None
             
-            if response.status_code == 200:
-                data = response.json()
-                document_id = data.get('document_id')
-                st.session_state['document_id'] = document_id
-                return document_id
-            else:
-                st.error(f"Upload failed: {response.text}")
-                return None
+            # Store first document ID for processing
+            if uploaded_ids:
+                st.session_state['document_ids'] = uploaded_ids
+                st.session_state['current_document_id'] = uploaded_ids[0]
+                return uploaded_ids
+            
+            return None
         except Exception as e:
             st.error(f"Upload error: {str(e)}")
             return None
@@ -296,7 +327,7 @@ def render_step_indicator(current_step: str):
 
 # ========== SIDEBAR COMPONENT ==========
 def render_sidebar(ui: DocumentIntelligenceUI):
-    """Render sidebar with grouped controls"""
+    """Render sidebar with navigation only"""
     with st.sidebar:
         # Logo and Title
         st.markdown("""
@@ -324,34 +355,6 @@ def render_sidebar(ui: DocumentIntelligenceUI):
         if not api_status:
             st.warning("⚠️ Start backend server:")
             st.code("uvicorn app.main:app --reload", language="bash")
-        
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        
-        # Step 1: Document Upload
-        st.markdown("### 📤 1. Upload Document")
-        
-        uploaded_file = st.file_uploader(
-            "Choose a PDF or image",
-            type=['pdf', 'png', 'jpg', 'jpeg'],
-            help="Supported formats: PDF, PNG, JPG, JPEG",
-            key="file_uploader"
-        )
-        
-        if uploaded_file is not None:
-            # File preview
-            with st.expander("📄 File Details", expanded=True):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Filename", uploaded_file.name[:20] + ("..." if len(uploaded_file.name) > 20 else ""))
-                with col2:
-                    st.metric("Size", f"{uploaded_file.size / 1024:.1f} KB")
-            
-            st.session_state['uploaded_file'] = uploaded_file
-            st.session_state['current_step'] = "upload"
-            
-            if st.button("✅ Confirm Upload", type="primary", use_container_width=True):
-                st.session_state['current_step'] = "process"
-                st.rerun()
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         
@@ -386,82 +389,112 @@ def render_sidebar(ui: DocumentIntelligenceUI):
                         st.session_state['current_step'] = "results"
                         st.rerun()
 
-# ========== HOME PAGE ==========
-def render_home_page(ui: DocumentIntelligenceUI):
-    """Render landing/home page"""
+# ========== FILE UPLOAD COMPONENT ==========
+def render_file_upload():
+    """Render drag & drop file upload area"""
     st.markdown("""
-    <div style="text-align: center; margin-bottom: 40px;">
-        <h1 style="font-size: 48px; margin-bottom: 20px; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-            Document Intelligence AI
-        </h1>
-        <p style="font-size: 18px; color: #94a3b8; max-width: 800px; margin: 0 auto 40px;">
-            Transform documents into actionable insights using AI-powered computer vision, 
-            OCR, and multi-agent analysis.
+    <div class="upload-area" id="uploadArea">
+        <div style="font-size: 48px; margin-bottom: 20px;">📤</div>
+        <h3 style="margin-bottom: 10px;">Drag & Drop Files Here</h3>
+        <p style="color: #94a3b8; margin-bottom: 20px;">or click to browse files</p>
+        <p style="color: #64748b; font-size: 12px;">
+            Supported: PDF, PNG, JPG, JPEG, DOC, DOCX, TXT, CSV
+        </p>
+        <p style="color: #94a3b8; font-size: 11px; margin-top: 10px;">
+            Multiple files supported (up to 10)
         </p>
     </div>
     """, unsafe_allow_html=True)
     
-    # How it works
-    st.markdown("### 🚀 How It Works")
+    # File uploader with drag & drop support
+    uploaded_files = st.file_uploader(
+        "",
+        type=['pdf', 'png', 'jpg', 'jpeg', 'doc', 'docx', 'txt', 'csv'],
+        accept_multiple_files=True,
+        help="Upload multiple documents for analysis",
+        key="file_uploader_main",
+        label_visibility="collapsed"
+    )
     
-    steps = [
-        {"icon": "📤", "title": "Upload", "desc": "Upload PDF or image documents"},
-        {"icon": "⚙️", "title": "Process", "desc": "AI agents analyze content"},
-        {"icon": "📊", "title": "Review", "desc": "View structured insights"},
-        {"icon": "🔍", "title": "Query", "desc": "Ask questions about content"}
-    ]
+    return uploaded_files
+
+def display_uploaded_files(uploaded_files):
+    """Display uploaded files with icons"""
+    if not uploaded_files:
+        return
     
-    cols = st.columns(4)
-    for i, step in enumerate(steps):
-        with cols[i]:
-            st.markdown(f"""
-            <div style="text-align: center; padding: 20px; background: rgba(79, 70, 229, 0.05); border-radius: 12px;">
-                <div style="font-size: 36px; margin-bottom: 15px;">{step['icon']}</div>
-                <h4 style="margin: 0 0 10px 0;">{step['title']}</h4>
-                <p style="color: #94a3b8; font-size: 14px; margin: 0;">{step['desc']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+    st.markdown("### 📁 Uploaded Files")
     
-    st.markdown("---")
-    
-    # Feature Cards (Now clickable)
-    st.markdown("### 🎯 Key Features")
-    
-    features = [
-        {
-            "icon": "👁️",
-            "title": "Computer Vision",
-            "desc": "Detect tables, charts, signatures",
-            "action": "vision",
-            "color": "#4f46e5"
-        },
-        {
-            "icon": "📝",
-            "title": "OCR Intelligence",
-            "desc": "Extract text with confidence scoring",
-            "action": "ocr",
-            "color": "#f59e0b"
-        },
-        {
-            "icon": "🤖",
-            "title": "Multi-Agent System",
-            "desc": "Validate & cross-check information",
-            "action": "agents",
-            "color": "#10b981"
+    for file in uploaded_files:
+        file_ext = Path(file.name).suffix.lower()
+        icon_map = {
+            '.pdf': '📕',
+            '.png': '🖼️',
+            '.jpg': '🖼️',
+            '.jpeg': '🖼️',
+            '.doc': '📄',
+            '.docx': '📄',
+            '.txt': '📝',
+            '.csv': '📊'
         }
-    ]
+        icon = icon_map.get(file_ext, '📎')
+        
+        col1, col2, col3 = st.columns([1, 4, 1])
+        with col1:
+            st.markdown(f'<div class="file-icon">{icon}</div>', unsafe_allow_html=True)
+        with col2:
+            st.text(file.name)
+        with col3:
+            st.text(f"{file.size / 1024:.1f} KB")
+
+# ========== HOME PAGE ==========
+def render_home_page(ui: DocumentIntelligenceUI):
+    """Render landing/home page"""
+    # Hero Section
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+        <div style="text-align: center; margin: 60px 0 40px 0;">
+            <h1 style="font-size: 48px; margin-bottom: 20px; color: white;">
+                Document Intelligence AI
+            </h1>
+            <p style="font-size: 18px; color: #94a3b8; line-height: 1.6;">
+                Transform documents into actionable insights using AI-powered computer vision, 
+                OCR, and multi-agent analysis.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
     
-    cols = st.columns(3)
-    for i, feature in enumerate(features):
-        with cols[i]:
-            if st.button(
-                f"**{feature['icon']} {feature['title']}**\n\n{feature['desc']}",
-                key=f"feature_{feature['action']}",
-                use_container_width=True,
-                help=f"Click to learn more about {feature['title']}"
-            ):
-                st.session_state['feature_view'] = feature['action']
-                st.rerun()
+    # How It Works - Simple 3-step flow
+    st.markdown("## 🚀 How It Works")
+    
+    steps_cols = st.columns(3)
+    with steps_cols[0]:
+        st.markdown("""
+        <div style="text-align: center; padding: 20px; border-radius: 12px; background: rgba(79, 70, 229, 0.05);">
+            <div style="font-size: 40px; margin-bottom: 15px;">📤</div>
+            <h3 style="margin: 10px 0;">Upload</h3>
+            <p style="color: #94a3b8;">Upload PDFs, images, or documents</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with steps_cols[1]:
+        st.markdown("""
+        <div style="text-align: center; padding: 20px; border-radius: 12px; background: rgba(79, 70, 229, 0.05);">
+            <div style="font-size: 40px; margin-bottom: 15px;">⚙️</div>
+            <h3 style="margin: 10px 0;">Process</h3>
+            <p style="color: #94a3b8;">AI agents analyze content</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with steps_cols[2]:
+        st.markdown("""
+        <div style="text-align: center; padding: 20px; border-radius: 12px; background: rgba(79, 70, 229, 0.05);">
+            <div style="font-size: 40px; margin-bottom: 15px;">🔍</div>
+            <h3 style="margin: 10px 0;">Query</h3>
+            <p style="color: #94a3b8;">Ask questions about your documents</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Get Started Button
     st.markdown("---")
@@ -473,30 +506,44 @@ def render_home_page(ui: DocumentIntelligenceUI):
 
 # ========== UPLOAD STEP ==========
 def render_upload_step(ui: DocumentIntelligenceUI):
-    """Render upload step"""
+    """Render upload step with drag & drop"""
     render_step_indicator("upload")
     
     st.markdown("""
     <div style="text-align: center; margin-bottom: 40px;">
-        <h2>📤 Upload Your Document</h2>
-        <p style="color: #94a3b8;">Start by uploading a PDF or image file for analysis</p>
+        <h2>📤 Upload Your Documents</h2>
+        <p style="color: #94a3b8;">Upload multiple files for analysis</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # Upload area
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("""
-        <div style="border: 2px dashed #4f46e5; border-radius: 12px; padding: 40px; text-align: center; background: rgba(79, 70, 229, 0.05);">
-            <div style="font-size: 48px; margin-bottom: 20px;">📤</div>
-            <h3 style="margin-bottom: 10px;">Drag & Drop</h3>
-            <p style="color: #94a3b8; margin-bottom: 20px;">or click to browse files</p>
-            <p style="color: #64748b; font-size: 12px;">Supported: PDF, PNG, JPG, JPEG</p>
-        </div>
-        """, unsafe_allow_html=True)
+    # Main upload area
+    uploaded_files = render_file_upload()
     
-    # File will be handled by sidebar
-    st.info("👈 Use the sidebar to upload your document")
+    if uploaded_files:
+        display_uploaded_files(uploaded_files)
+        
+        # Store uploaded files in session state
+        st.session_state['uploaded_files'] = uploaded_files
+        
+        # Proceed button
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("✅ Proceed to Processing", type="primary", use_container_width=True):
+                # Store files for processing
+                file_bytes_list = [file.getvalue() for file in uploaded_files]
+                filenames = [file.name for file in uploaded_files]
+                
+                # Upload to backend
+                with st.spinner("Uploading documents..."):
+                    document_ids = ui.upload_documents(file_bytes_list, filenames)
+                    
+                    if document_ids:
+                        st.success(f"✅ Uploaded {len(document_ids)} documents successfully!")
+                        st.session_state['document_ids'] = document_ids
+                        st.session_state['current_step'] = "process"
+                        st.rerun()
+                    else:
+                        st.error("❌ Upload failed")
 
 # ========== PROCESS STEP ==========
 def render_process_step(ui: DocumentIntelligenceUI):
@@ -505,17 +552,19 @@ def render_process_step(ui: DocumentIntelligenceUI):
     
     st.markdown("""
     <div style="text-align: center; margin-bottom: 40px;">
-        <h2>⚙️ Process Document</h2>
+        <h2>⚙️ Process Documents</h2>
         <p style="color: #94a3b8;">Configure processing options and start analysis</p>
     </div>
     """, unsafe_allow_html=True)
     
-    if 'uploaded_file' not in st.session_state:
-        st.warning("Please upload a document first")
+    if 'document_ids' not in st.session_state or not st.session_state['document_ids']:
+        st.warning("No documents uploaded. Please upload documents first.")
         if st.button("Go to Upload", key="go_to_upload"):
             st.session_state['current_step'] = "upload"
             st.rerun()
         return
+    
+    document_ids = st.session_state['document_ids']
     
     # Processing Options
     with st.expander("⚙️ Processing Configuration", expanded=True):
@@ -523,40 +572,66 @@ def render_process_step(ui: DocumentIntelligenceUI):
         
         with col1:
             st.markdown("#### 👁️ Vision Analysis")
-            layout_detection = st.checkbox("Layout Detection", value=True, 
-                                          help="Detect tables, figures, charts")
+            layout_detection = st.checkbox("Layout Detection", value=True)
             signature_detection = st.checkbox("Signature Detection", value=True)
+            table_detection = st.checkbox("Table Detection", value=True)
         
         with col2:
             st.markdown("#### 📝 Text Analysis")
             ocr_enabled = st.checkbox("OCR Extraction", value=True)
+            entity_extraction = st.checkbox("Entity Extraction", value=True)
             semantic_analysis = st.checkbox("Semantic Analysis", value=True)
+    
+    # Agent selection
+    st.markdown("#### 🤖 AI Agents")
+    agent_cols = st.columns(4)
+    with agent_cols[0]:
+        vision_agent = st.checkbox("Vision Agent", value=True)
+    with agent_cols[1]:
+        text_agent = st.checkbox("Text Agent", value=True)
+    with agent_cols[2]:
+        fusion_agent = st.checkbox("Fusion Agent", value=True)
+    with agent_cols[3]:
+        validation_agent = st.checkbox("Validation Agent", value=True)
     
     # Start Processing
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("🚀 Start Processing", type="primary", use_container_width=True):
-            with st.spinner("Uploading document..."):
-                uploaded_file = st.session_state['uploaded_file']
-                document_id = ui.upload_document(
-                    uploaded_file.getvalue(),
-                    uploaded_file.name
-                )
-            
-            if document_id:
-                st.session_state['document_id'] = document_id
-                st.session_state['current_step'] = "processing"
-                st.rerun()
+        if st.button("🚀 Start Processing All Documents", type="primary", use_container_width=True):
+            st.session_state['current_step'] = "processing"
+            st.session_state['current_document_index'] = 0
+            st.rerun()
 
 # ========== PROCESSING VIEW ==========
-def render_processing_view(ui: DocumentIntelligenceUI, document_id: str):
+def render_processing_view(ui: DocumentIntelligenceUI):
     """Render real-time processing view"""
     render_step_indicator("process")
     
-    st.markdown("""
+    if 'document_ids' not in st.session_state:
+        st.error("No documents to process. Please upload documents first.")
+        if st.button("Go to Upload"):
+            st.session_state['current_step'] = "upload"
+            st.rerun()
+        return
+    
+    document_ids = st.session_state['document_ids']
+    current_index = st.session_state.get('current_document_index', 0)
+    
+    if current_index >= len(document_ids):
+        # All documents processed
+        st.success("✅ All documents processed successfully!")
+        if st.button("View Results", type="primary"):
+            st.session_state['current_step'] = "results"
+            st.session_state['current_document_id'] = document_ids[0]
+            st.rerun()
+        return
+    
+    current_document_id = document_ids[current_index]
+    
+    st.markdown(f"""
     <div style="text-align: center; margin-bottom: 40px;">
-        <h2>🔄 Processing Document</h2>
+        <h2>🔄 Processing Document {current_index + 1} of {len(document_ids)}</h2>
         <p style="color: #94a3b8;">AI agents are analyzing your document</p>
     </div>
     """, unsafe_allow_html=True)
@@ -578,7 +653,7 @@ def render_processing_view(ui: DocumentIntelligenceUI, document_id: str):
     max_polls = 120  # 2 minutes timeout
     
     for poll_count in range(max_polls):
-        status_data = ui.get_processing_status(document_id)
+        status_data = ui.get_processing_status(current_document_id)
         current_status = status_data.get('status', 'unknown')
         
         # Update progress
@@ -598,7 +673,7 @@ def render_processing_view(ui: DocumentIntelligenceUI, document_id: str):
         
         with status_placeholder.container():
             st.markdown(f"### Status: **{current_status.upper()}**")
-            st.markdown(f"**Document ID:** `{document_id[:12]}...`")
+            st.markdown(f"**Document ID:** `{current_document_id[:12]}...`")
             st.markdown(f"**Elapsed Time:** {elapsed:.1f}s")
             
             # Agent progress
@@ -627,27 +702,38 @@ def render_processing_view(ui: DocumentIntelligenceUI, document_id: str):
     
     # Final status
     if current_status == 'completed':
-        st.success("✅ Processing completed successfully!")
+        st.success(f"✅ Document {current_index + 1} processed successfully!")
         
         # Fetch results
         with st.spinner("Loading results..."):
-            results = ui.get_results(document_id)
+            results = ui.get_results(current_document_id)
             if results:
-                st.session_state['results'] = results
+                if 'results' not in st.session_state:
+                    st.session_state['results'] = {}
+                st.session_state['results'][current_document_id] = results
+                
                 # Add to recent documents
                 if 'recent_docs' not in st.session_state:
                     st.session_state['recent_docs'] = []
                 
                 st.session_state['recent_docs'].insert(0, {
-                    'id': document_id,
-                    'name': f"Document_{document_id[:8]}",
+                    'id': current_document_id,
+                    'name': f"Document_{current_document_id[:8]}",
                     'timestamp': datetime.now().isoformat()
                 })
                 st.session_state['recent_docs'] = st.session_state['recent_docs'][:10]
         
-        if st.button("📊 View Results", type="primary", use_container_width=True):
-            st.session_state['current_step'] = "results"
+        # Move to next document or finish
+        if current_index + 1 < len(document_ids):
+            st.session_state['current_document_index'] = current_index + 1
             st.rerun()
+        else:
+            # All documents processed
+            st.success("✅ All documents processed successfully!")
+            if st.button("📊 View Results", type="primary", use_container_width=True):
+                st.session_state['current_step'] = "results"
+                st.session_state['current_document_id'] = document_ids[0]
+                st.rerun()
     
     elif current_status == 'error':
         error_msg = status_data.get('error', 'Unknown error')
@@ -668,11 +754,35 @@ def render_processing_view(ui: DocumentIntelligenceUI, document_id: str):
             st.rerun()
 
 # ========== RESULTS VIEW ==========
-def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
+def render_results_view(ui: DocumentIntelligenceUI):
     """Render structured results view"""
     render_step_indicator("results")
     
-    document_id = results.get('document_id', 'Unknown')
+    if 'current_document_id' not in st.session_state:
+        st.error("No document selected. Please process a document first.")
+        if st.button("Go to Upload"):
+            st.session_state['current_step'] = "upload"
+            st.rerun()
+        return
+    
+    document_id = st.session_state['current_document_id']
+    
+    # Load results
+    if 'results' not in st.session_state or document_id not in st.session_state['results']:
+        with st.spinner("Loading results..."):
+            results = ui.get_results(document_id)
+            if results:
+                if 'results' not in st.session_state:
+                    st.session_state['results'] = {}
+                st.session_state['results'][document_id] = results
+            else:
+                st.error("Results not found. Please process the document first.")
+                if st.button("Go to Process"):
+                    st.session_state['current_step'] = "process"
+                    st.rerun()
+                return
+    
+    results = st.session_state['results'][document_id]
     
     # Header
     st.markdown(f"""
@@ -682,37 +792,29 @@ def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
     </div>
     """, unsafe_allow_html=True)
     
-    # Overall Score Card
-    if 'results' in results:
-        result_data = results['results']
-        
-        # Overall confidence
-        overall_conf = result_data.get('overall_confidence', 0.85) * 100
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown(f"""
-            <div style="text-align: center; background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%); border-radius: 12px; padding: 20px;">
-                <div style="font-size: 32px; font-weight: bold; color: #4f46e5;">{overall_conf:.0f}%</div>
-                <div style="color: #94a3b8; font-size: 14px;">Confidence Score</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            elements = len(result_data.get('visual_elements', []))
-            st.metric("Visual Elements", elements, help="Tables, charts, figures detected")
-        
-        with col3:
-            fields = len(result_data.get('extracted_fields', {}))
-            st.metric("Fields Extracted", fields, help="Structured data fields")
-        
-        with col4:
-            issues = len(result_data.get('contradictions', []))
-            st.metric("Issues Found", issues, delta_color="inverse")
+    # Overall metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        overall_conf = results.get('overall_confidence', 0.85) * 100
+        st.metric("Confidence", f"{overall_conf:.0f}%")
+    
+    with col2:
+        elements = len(results.get('visual_elements', []))
+        st.metric("Visual Elements", elements)
+    
+    with col3:
+        fields = len(results.get('extracted_fields', {}))
+        st.metric("Fields Extracted", fields)
+    
+    with col4:
+        issues = len(results.get('contradictions', []))
+        st.metric("Issues Found", issues, delta_color="inverse")
     
     # Tabs for detailed results
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📋 Summary",
+        "🤖 Agent Outputs",
         "👁️ Visual Analysis",
         "📝 Extracted Content",
         "✅ Validation"
@@ -722,55 +824,57 @@ def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
     with tab1:
         st.markdown("### 📋 Document Summary")
         
-        if 'results' in results:
-            summary_data = results['results']
-            
-            # Document Type
-            doc_type = summary_data.get('document_type', 'Unknown')
-            st.markdown(f"**Document Type:** `{doc_type}`")
-            
-            # Processing Time
-            if 'processing_metadata' in summary_data:
-                metadata = summary_data['processing_metadata']
-                st.markdown(f"**Processing Time:** {metadata.get('duration_seconds', 'N/A')}s")
-            
-            # Agent Status
+        if 'document_type' in results:
+            st.markdown(f"**Document Type:** `{results['document_type']}`")
+        
+        if 'processing_time' in results:
+            st.markdown(f"**Processing Time:** {results['processing_time']}s")
+        
+        # Agent Status
+        if 'agent_outputs' in results:
             st.markdown("#### 🤖 Agent Results")
-            
-            agent_outputs = summary_data.get('agent_outputs', {})
-            for agent_name, agent_data in agent_outputs.items():
-                with st.expander(f"{agent_name.title()} Agent"):
+            for agent_name, agent_data in results['agent_outputs'].items():
+                with st.expander(f"{agent_data.get('name', agent_name.title())} {agent_data.get('icon', '')}"):
                     status = agent_data.get('status', 'completed')
-                    status_badge = "🟢" if status == 'completed' else "🟡" if status == 'processing' else "🔴"
+                    confidence = agent_data.get('confidence', 0) * 100
                     
-                    col1, col2 = st.columns([1, 3])
-                    with col1:
+                    col_a, col_b = st.columns([1, 3])
+                    with col_a:
+                        status_badge = "🟢" if status == 'completed' else "🟡" if status == 'processing' else "🔴"
                         st.markdown(f"**Status:** {status_badge} {status}")
-                    with col2:
-                        confidence = agent_data.get('confidence', 0) * 100
+                    with col_b:
                         st.progress(confidence/100, text=f"{confidence:.1f}% confidence")
                     
                     # Key findings
                     findings = agent_data.get('key_findings', [])
                     if findings:
                         st.markdown("**Key Findings:**")
-                        for finding in findings[:5]:  # Show only top 5
+                        for finding in findings[:5]:
                             st.markdown(f"- {finding}")
     
-    # Tab 2: Visual Analysis
+    # Tab 2: Agent Outputs
     with tab2:
+        st.markdown("### 🤖 Agent Outputs")
+        
+        if 'agent_outputs' in results:
+            for agent_name, agent_data in results['agent_outputs'].items():
+                with st.expander(f"{agent_data.get('name', agent_name.title())} - {agent_data.get('description', '')}"):
+                    st.json(agent_data)
+        else:
+            st.info("No agent outputs available")
+    
+    # Tab 3: Visual Analysis
+    with tab3:
         st.markdown("### 👁️ Visual Element Detection")
         
-        visual_elements = results.get('results', {}).get('visual_elements', [])
+        visual_elements = results.get('visual_elements', [])
         
         if visual_elements:
             # Group by type
             element_types = {}
             for element in visual_elements:
                 elem_type = element.get('type', 'unknown')
-                if elem_type not in element_types:
-                    element_types[elem_type] = 0
-                element_types[elem_type] += 1
+                element_types[elem_type] = element_types.get(elem_type, 0) + 1
             
             # Pie chart
             if element_types:
@@ -785,25 +889,25 @@ def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
             
             # Element list
             st.markdown("#### Detected Elements")
-            for element in visual_elements[:10]:  # Limit display
+            for element in visual_elements[:10]:
                 with st.expander(f"{element.get('type', 'Unknown').title()} - Confidence: {element.get('confidence', 0)*100:.1f}%"):
                     st.json(element)
         else:
             st.info("No visual elements detected")
     
-    # Tab 3: Extracted Content
-    with tab3:
+    # Tab 4: Extracted Content
+    with tab4:
         st.markdown("### 📝 Extracted Text & Data")
         
         # Text content
-        text_content = results.get('results', {}).get('extracted_text', '')
+        text_content = results.get('extracted_text', '')
         if text_content:
             with st.expander("📄 Full Text", expanded=False):
                 st.text_area("", text_content[:5000], height=200, 
                            label_visibility="collapsed")
         
         # Structured data
-        extracted_fields = results.get('results', {}).get('extracted_fields', {})
+        extracted_fields = results.get('extracted_fields', {})
         if extracted_fields:
             st.markdown("#### 📊 Structured Data")
             
@@ -814,7 +918,7 @@ def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
                     "Field": field_name,
                     "Value": str(field_data.get('value', '')),
                     "Confidence": f"{field_data.get('confidence', 0)*100:.1f}%",
-                    "Source": ", ".join(field_data.get('sources', []))[:30]
+                    "Sources": ", ".join(field_data.get('sources', []))[:30]
                 })
             
             if rows:
@@ -823,16 +927,16 @@ def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
         else:
             st.info("No structured data extracted")
     
-    # Tab 4: Validation
-    with tab4:
+    # Tab 5: Validation
+    with tab5:
         st.markdown("### ✅ Validation & Quality Check")
         
-        contradictions = results.get('results', {}).get('contradictions', [])
+        contradictions = results.get('contradictions', [])
         
         if contradictions:
             st.warning(f"Found {len(contradictions)} potential issue(s)")
             
-            for i, contradiction in enumerate(contradictions[:5]):  # Limit display
+            for i, contradiction in enumerate(contradictions[:5]):
                 severity = contradiction.get('severity', 'medium')
                 severity_color = {
                     'low': '🟢',
@@ -854,15 +958,18 @@ def render_results_view(ui: DocumentIntelligenceUI, results: Dict):
     # Navigation
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
+    
     with col1:
-        if st.button("🔄 Process New", use_container_width=True):
+        if st.button("🏠 Return Home", use_container_width=True):
             st.session_state.clear()
-            st.session_state['current_step'] = "upload"
+            st.session_state['current_step'] = "home"
             st.rerun()
+    
     with col2:
         if st.button("🔍 Query Document", type="primary", use_container_width=True):
             st.session_state['current_step'] = "query"
             st.rerun()
+    
     with col3:
         if st.button("📥 Export Results", use_container_width=True):
             results_json = json.dumps(results, indent=2)
@@ -886,14 +993,21 @@ def render_query_step(ui: DocumentIntelligenceUI):
     </div>
     """, unsafe_allow_html=True)
     
-    if 'document_id' not in st.session_state:
+    if 'current_document_id' not in st.session_state:
         st.warning("No document selected. Please process a document first.")
         if st.button("Go to Upload", key="goto_upload_from_query"):
             st.session_state['current_step'] = "upload"
             st.rerun()
         return
     
-    document_id = st.session_state['document_id']
+    document_id = st.session_state['current_document_id']
+    
+    # Document selector if multiple documents
+    if 'document_ids' in st.session_state and len(st.session_state['document_ids']) > 1:
+        doc_options = {f"Document {i+1} ({doc_id[:8]}...)": doc_id 
+                      for i, doc_id in enumerate(st.session_state['document_ids'])}
+        selected_doc = st.selectbox("Select Document:", list(doc_options.keys()))
+        document_id = doc_options[selected_doc]
     
     # Query interface
     col1, col2 = st.columns([3, 1])
@@ -931,6 +1045,13 @@ def render_query_step(ui: DocumentIntelligenceUI):
                     with st.expander("📚 Sources"):
                         for source in sources:
                             st.markdown(f"- {source}")
+                
+                # Supporting evidence
+                evidence = response.get('supporting_evidence', [])
+                if evidence:
+                    with st.expander("🔍 Supporting Evidence"):
+                        for ev in evidence:
+                            st.markdown(f"- {ev}")
             else:
                 st.warning("No answer found. Try rephrasing your question.")
     
@@ -961,10 +1082,12 @@ def main():
     # Initialize session state
     if 'current_step' not in st.session_state:
         st.session_state['current_step'] = "home"
-    if 'document_id' not in st.session_state:
-        st.session_state['document_id'] = None
+    if 'current_document_id' not in st.session_state:
+        st.session_state['current_document_id'] = None
+    if 'document_ids' not in st.session_state:
+        st.session_state['document_ids'] = []
     if 'results' not in st.session_state:
-        st.session_state['results'] = None
+        st.session_state['results'] = {}
     if 'recent_docs' not in st.session_state:
         st.session_state['recent_docs'] = []
     
@@ -986,11 +1109,11 @@ def main():
     elif current_step == "process":
         render_process_step(ui)
     
-    elif current_step == "processing" and 'document_id' in st.session_state:
-        render_processing_view(ui, st.session_state['document_id'])
+    elif current_step == "processing":
+        render_processing_view(ui)
     
-    elif current_step == "results" and 'results' in st.session_state:
-        render_results_view(ui, st.session_state['results'])
+    elif current_step == "results":
+        render_results_view(ui)
     
     elif current_step == "query":
         render_query_step(ui)

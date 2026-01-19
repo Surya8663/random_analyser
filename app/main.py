@@ -1,3 +1,4 @@
+# app/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -51,13 +52,8 @@ async def lifespan(app: FastAPI):
             from app.rag.retriever import MultiModalRetriever
             app.state.retriever = MultiModalRetriever()
             logger.info("✅ MultiModalRetriever service initialized")
+            # No need to call .initialize() - it's done in __init__
             
-            # Try to initialize retriever
-            try:
-                await app.state.retriever.initialize()
-                logger.info("✅ Retriever initialized")
-            except Exception as e:
-                logger.warning(f"⚠️ Retriever initialization failed: {e}")
         except ImportError as e:
             logger.warning(f"⚠️ MultiModalRetriever not available: {e}")
             app.state.retriever = None
