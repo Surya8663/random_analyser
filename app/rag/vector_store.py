@@ -1,259 +1,234 @@
-# app/rag/vector_store.py
+import logging
 from typing import List, Dict, Any, Optional
-import numpy as np
-from app.utils.logger import setup_logger
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+from qdrant_client.http.models import (
+    VectorParams, 
+    Distance, 
+    PointStruct,
+    Filter, 
+    FieldCondition, 
+    MatchValue
+)
 
-logger = setup_logger(__name__)
+from app.core.config import settings
 
 class VectorStore:
-    """Wrapper for Qdrant vector database operations - FIXED"""
+    """Vector store for document embeddings using Qdrant."""
     
     def __init__(self):
-        self.client = None
-        self._initialize_client()
+        self.client = QdrantClient(
+            host=settings.QDRANT_HOST,
+            port=settings.QDRANT_PORT,
+            timeout=10  # Added timeout
+        )
+        self.collection_name = settings.QDRANT_COLLECTION
+        
+        # Don't try to verify collection on init - let it fail gracefully
+        # We'll handle collection creation during upsert
+        self._collection_initialized = False
+        
+        logging.info(f"✅ VectorStore initialized for collection: {self.collection_name}")
     
-    def _initialize_client(self):
-        """Initialize Qdrant client with proper error handling"""
+    def _ensure_collection(self, vector_size: int = 384):
+        """Ensure the collection exists with correct configuration."""
         try:
-            from app.core.config import settings
-            
-            self.collection_name = getattr(settings, 'QDRANT_COLLECTION', 'document_embeddings')
-            self.embedding_dimension = getattr(settings, 'EMBEDDING_DIMENSION', 384)
-            
-            # Try to import and initialize Qdrant
+            # Try to get collections first
             try:
-                from qdrant_client import QdrantClient
-                
-                qdrant_host = getattr(settings, 'QDRANT_HOST', 'localhost')
-                qdrant_port = getattr(settings, 'QDRANT_PORT', 6333)
-                
-                self.client = QdrantClient(
-                    host=qdrant_host,
-                    port=qdrant_port,
-                    timeout=30
-                )
-                
-                logger.info(f"✅ VectorStore initialized for collection: {self.collection_name}")
-                
-            except ImportError:
-                logger.warning("⚠️ Qdrant client not available")
-                self.client = None
-                
-        except Exception as e:
-            logger.warning(f"⚠️ VectorStore initialization failed: {e}")
-            self.client = None
-    
-    async def index_documents(self, documents: List[Dict[str, Any]]) -> bool:
-        """
-        Index documents in the vector store
-        """
-        try:
-            if not documents:
-                logger.warning("⚠️ No documents to index")
-                return False
-            
-            if not self.client:
-                logger.warning("⚠️ Qdrant client not available, skipping indexing")
-                return True  # Return True to not block processing
-            
-            # Import Qdrant models
-            from qdrant_client.http import models
-            from qdrant_client.http.models import PointStruct
-            
-            points = []
-            for doc in documents:
-                point_id = doc.get("id")
-                embedding = doc.get("embedding")
-                text = doc.get("text", "")
-                metadata = doc.get("metadata", {})
-                
-                if embedding is None:
-                    logger.warning(f"⚠️ Skipping document {point_id}: No embedding")
-                    continue
-                
-                # Ensure embedding is list
-                if isinstance(embedding, np.ndarray):
-                    embedding = embedding.tolist()
-                
-                # Prepare payload
-                payload = {
-                    "text": text[:1000],  # Limit text in payload
-                    "full_text": text,
-                    **metadata
-                }
-                
-                point = PointStruct(
-                    id=point_id,
-                    vector=embedding,
-                    payload=payload
-                )
-                points.append(point)
-            
-            if not points:
-                logger.warning("⚠️ No valid points to index")
-                return False
-            
-            # Check if collection exists, create if not
-            collections = self.client.get_collections()
-            collection_names = [c.name for c in collections.collections]
+                collections = self.client.get_collections()
+                collection_names = [c.name for c in collections.collections]
+            except Exception as e:
+                logging.warning(f"Could not get collections: {str(e)}")
+                collection_names = []
             
             if self.collection_name not in collection_names:
-                logger.info(f"📁 Creating collection: {self.collection_name}")
-                
+                # Create collection
                 self.client.create_collection(
                     collection_name=self.collection_name,
-                    vectors_config=models.VectorParams(
-                        size=self.embedding_dimension,
-                        distance=models.Distance.COSINE
+                    vectors_config=VectorParams(
+                        size=vector_size,
+                        distance=Distance.COSINE
                     )
                 )
-            
-            # Upsert points
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=points
-            )
-            
-            logger.info(f"✅ Indexed {len(points)} documents")
-            return True
-            
+                logging.info(f"Created collection: {self.collection_name}")
+                self._collection_initialized = True
+            else:
+                logging.info(f"Collection exists: {self.collection_name}")
+                self._collection_initialized = True
+                
         except Exception as e:
-            logger.error(f"❌ Document indexing failed: {e}", exc_info=True)
-            return False
+            logging.error(f"Error ensuring collection: {str(e)}")
+            # Don't raise, we'll try to create on upsert
     
-    async def search(self, 
-                    query_embedding: np.ndarray,
-                    filters: Optional[Dict[str, Any]] = None,
-                    limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Search for similar documents
-        """
+    def upsert(self, points: List[Dict[str, Any]]):
+        """Upsert points into the vector store."""
         try:
-            if not self.client:
-                logger.warning("⚠️ Qdrant client not available, returning empty results")
-                return []
+            # Ensure collection exists before upserting
+            if not self._collection_initialized:
+                self._ensure_collection()
             
-            from qdrant_client.http import models
+            point_structs = []
+            for point in points:
+                point_id = point.get("id")
+                vector = point.get("vector", [])
+                payload = point.get("payload", {})
+                
+                if point_id and vector:
+                    point_structs.append(
+                        PointStruct(
+                            id=point_id,
+                            vector=vector,
+                            payload=payload
+                        )
+                    )
             
-            # Prepare filter
-            qdrant_filter = None
-            if filters:
-                conditions = []
-                for key, value in filters.items():
-                    if isinstance(value, dict):
-                        # Handle special operators
-                        if "$in" in value:
-                            conditions.append(
-                                models.FieldCondition(
-                                    key=key,
-                                    match=models.MatchAny(any=value["$in"])
-                                )
-                            )
+            if point_structs:
+                # Try to upsert, if collection doesn't exist, create it first
+                try:
+                    operation_info = self.client.upsert(
+                        collection_name=self.collection_name,
+                        points=point_structs,
+                        wait=True
+                    )
+                    logging.info(f"Upserted {len(point_structs)} points. Status: {operation_info.status}")
+                except Exception as upsert_error:
+                    # Collection might not exist, create it
+                    if "not found" in str(upsert_error).lower():
+                        logging.info(f"Collection not found, creating it...")
+                        self._ensure_collection(len(vector) if vector else 384)
+                        # Retry upsert
+                        operation_info = self.client.upsert(
+                            collection_name=self.collection_name,
+                            points=point_structs,
+                            wait=True
+                        )
+                        logging.info(f"Upserted {len(point_structs)} points after creating collection.")
                     else:
-                        conditions.append(
-                            models.FieldCondition(
-                                key=key,
-                                match=models.MatchValue(value=value)
+                        raise upsert_error
+                
+        except Exception as e:
+            logging.error(f"Error upserting points: {str(e)}")
+            # Don't crash, just log the error
+    
+    def search(self, 
+               query_vector: List[float],
+               limit: int = 5,
+               score_threshold: float = 0.3,
+               query_filter: Optional[Dict] = None) -> List[Any]:
+        """Search for similar vectors."""
+        try:
+            # Ensure collection exists
+            if not self._collection_initialized:
+                self._ensure_collection()
+            
+            # Convert filter dict to Qdrant Filter
+            qdrant_filter = None
+            if query_filter:
+                must_conditions = []
+                for condition in query_filter.get("must", []):
+                    if condition.get("key") == "document_id":
+                        must_conditions.append(
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchValue(value=condition.get("match", {}).get("value"))
                             )
                         )
                 
-                if conditions:
-                    qdrant_filter = models.Filter(must=conditions)
+                if must_conditions:
+                    qdrant_filter = Filter(must=must_conditions)
             
-            # Ensure embedding is list
-            if isinstance(query_embedding, np.ndarray):
-                query_embedding = query_embedding.tolist()
-            
-            # Search
-            search_result = self.client.search(
-                collection_name=self.collection_name,
-                query_vector=query_embedding,
-                query_filter=qdrant_filter,
-                limit=limit,
-                score_threshold=0.3
-            )
-            
-            # Format results
-            results = []
-            for hit in search_result:
-                results.append({
-                    "id": hit.id,
-                    "score": hit.score,
-                    "text": hit.payload.get("full_text") or hit.payload.get("text", ""),
-                    "metadata": hit.payload
-                })
-            
-            return results
-            
+            try:
+                search_results = self.client.search(
+                    collection_name=self.collection_name,
+                    query_vector=query_vector,
+                    query_filter=qdrant_filter,
+                    limit=limit,
+                    score_threshold=score_threshold
+                )
+                
+                return search_results
+            except Exception as search_error:
+                if "not found" in str(search_error).lower():
+                    logging.warning(f"Collection {self.collection_name} not found for search")
+                    return []
+                else:
+                    raise search_error
+                
         except Exception as e:
-            logger.error(f"❌ Search failed: {e}", exc_info=True)
+            logging.error(f"Search error: {str(e)}")
             return []
     
-    async def delete_document(self, document_id: str) -> bool:
-        """
-        Delete all vectors for a document
-        """
+    def delete_by_document(self, document_id: str):
+        """Delete all points for a specific document."""
         try:
-            if not self.client:
-                logger.warning("⚠️ Qdrant client not available")
-                return True
+            # Ensure collection exists
+            if not self._collection_initialized:
+                self._ensure_collection()
             
-            from qdrant_client.http import models
-            
-            # Find points for this document
-            scroll_result = self.client.scroll(
+            self.client.delete(
                 collection_name=self.collection_name,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="document_id",
-                            match=models.MatchValue(value=document_id)
-                        )
-                    ]
-                ),
-                limit=1000
-            )
-            
-            point_ids = [point.id for point in scroll_result[0]]
-            
-            if point_ids:
-                # Delete points
-                self.client.delete(
-                    collection_name=self.collection_name,
-                    points_selector=point_ids
+                points_selector=models.FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchValue(value=document_id)
+                            )
+                        ]
+                    )
                 )
-                logger.info(f"🗑️ Deleted {len(point_ids)} points for document {document_id}")
-            
-            return True
+            )
+            logging.info(f"Deleted vectors for document: {document_id}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to delete document: {e}")
-            return False
+            logging.error(f"Error deleting document vectors: {str(e)}")
     
-    async def get_stats(self) -> Dict[str, Any]:
-        """Get collection statistics"""
+    def count_documents(self) -> int:
+        """Count total points in the collection."""
         try:
-            if not self.client:
-                return {
-                    "status": "qdrant_not_available",
-                    "collection_name": self.collection_name,
-                    "ready": False
-                }
+            # Ensure collection exists
+            if not self._collection_initialized:
+                self._ensure_collection()
             
-            info = self.client.get_collection(self.collection_name)
-            
-            return {
-                "collection_name": self.collection_name,
-                "vector_size": info.config.params.vectors.size,
-                "total_points": info.points_count,
-                "segments_count": info.segments_count,
-                "ready": True
-            }
-            
+            try:
+                count_result = self.client.count(
+                    collection_name=self.collection_name
+                )
+                return count_result.count
+            except Exception as count_error:
+                if "not found" in str(count_error).lower():
+                    return 0
+                else:
+                    raise count_error
         except Exception as e:
-            logger.error(f"❌ Failed to get collection stats: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "ready": False
-            }
+            logging.error(f"Error counting documents: {str(e)}")
+            return 0
+    
+    def get_collection_info(self) -> Dict[str, Any]:
+        """Get collection information."""
+        try:
+            # Ensure collection exists
+            if not self._collection_initialized:
+                self._ensure_collection()
+            
+            try:
+                info = self.client.get_collection(self.collection_name)
+                return {
+                    "name": self.collection_name,
+                    "vector_size": info.config.params.vectors.size,
+                    "distance": str(info.config.params.vectors.distance),
+                    "points_count": info.points_count
+                }
+            except Exception as info_error:
+                if "not found" in str(info_error).lower():
+                    return {"name": self.collection_name, "status": "not_found"}
+                else:
+                    # Handle version compatibility issues
+                    logging.warning(f"Could not get detailed collection info: {str(info_error)}")
+                    return {
+                        "name": self.collection_name,
+                        "status": "unknown"
+                    }
+        except Exception as e:
+            logging.error(f"Error getting collection info: {str(e)}")
+            return {"name": self.collection_name, "error": str(e)}

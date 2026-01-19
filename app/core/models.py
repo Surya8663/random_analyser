@@ -35,7 +35,8 @@ class ProcessingStep(str, Enum):
     VALIDATION = "validation"
     RESULTS = "results"
     QUERY = "query"
-    ERROR = "error"              # ✅ ADDED THIS
+    ERROR = "error"
+    COMPLETED = "completed"              # ✅ ADDED THIS
 
 class QualityScore(BaseModel):
     sharpness: float = Field(..., ge=0, le=1)
