@@ -1,3 +1,4 @@
+# models.py - FIXED VERSION
 from pydantic import BaseModel, Field, validator
 from typing import Dict, List, Optional, Any, Union
 from enum import Enum
@@ -23,15 +24,18 @@ class AgentStatus(str, Enum):
     ERROR = "error"
     SKIPPED = "skipped"
 
+# ✅ FIXED: Added missing PROCESSING and ERROR values
 class ProcessingStep(str, Enum):
     UPLOAD = "upload"
     PREPROCESSING = "preprocessing"
+    PROCESSING = "processing"    # ✅ ADDED THIS
     VISION = "vision"
     TEXT = "text"
     FUSION = "fusion"
     VALIDATION = "validation"
     RESULTS = "results"
     QUERY = "query"
+    ERROR = "error"              # ✅ ADDED THIS
 
 class QualityScore(BaseModel):
     sharpness: float = Field(..., ge=0, le=1)
@@ -141,6 +145,9 @@ class ProcessingState(BaseModel):
     ocr_confidence: Dict[int, float] = Field(default_factory=dict)
     extracted_entities: Dict[str, List[str]] = Field(default_factory=dict)
     semantic_analysis: Dict[str, Any] = Field(default_factory=dict)
+    
+    # ✅ CRITICAL FIX: Added missing extracted_text field
+    extracted_text: str = Field(default="")
     
     # Fusion results
     aligned_data: Dict[str, Any] = Field(default_factory=dict)

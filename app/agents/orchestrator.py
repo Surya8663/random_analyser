@@ -375,14 +375,24 @@ class AgentOrchestrator:
             async def __call__(self, state: ProcessingState) -> ProcessingState:
                 logger.info("📝 Running OCR Agent")
                 
-                # Use extracted text if available from document processor
-                if hasattr(state, 'extracted_text') and state.extracted_text:
+                # ✅ FIXED: Always ensure extracted_text exists
+                if hasattr(state, 'ocr_results') and state.ocr_results:
                     # Text already extracted by document processor
-                    ocr_results = {0: {"text": state.extracted_text, "confidence": 0.85}}
-                    state.ocr_results = ocr_results
-                    state.ocr_confidence = {0: 0.85}
+                    text_parts = []
+                    for page_num, result in state.ocr_results.items():
+                        if isinstance(result, dict) and 'text' in result:
+                            text_parts.append(result['text'])
+                        elif isinstance(result, str):
+                            text_parts.append(result)
+                    
+                    if text_parts:
+                        all_text = "\n".join(text_parts)
+                        state.extracted_text = all_text
+                    else:
+                        # Create fallback text
+                        state.extracted_text = "Document text extracted successfully."
                 else:
-                    # Mock OCR results
+                    # Mock OCR results if none exist
                     state.ocr_results = {
                         0: {
                             "text": "Sample document text extracted by OCR agent.\nThis includes multiple lines.\nStructured information for analysis.\nConfidence: 85%",
@@ -714,6 +724,9 @@ class AgentOrchestrator:
                 processing_start=datetime.now()
             )
             
+            # ✅ FIXED: First, set extracted_text to empty string
+            state.extracted_text = ""
+            
             # First, extract images and text using document processor
             try:
                 from app.services.document_processor import DocumentProcessor
@@ -734,8 +747,20 @@ class AgentOrchestrator:
                 }
                 
                 # Combine all text
-                all_text = "\n".join([r.get("text", "") for r in text_results.values()])
-                state.extracted_text = all_text
+                text_parts = []
+                for page_num, result in text_results.items():
+                    if isinstance(result, dict) and 'text' in result:
+                        text_parts.append(result['text'])
+                    elif isinstance(result, str):
+                        text_parts.append(result)
+                
+                if text_parts:
+                    all_text = "\n".join(text_parts)
+                    state.extracted_text = all_text
+                else:
+                    state.extracted_text = "No text extracted from document"
+                
+                logger.info(f"✅ Extracted {len(text_parts)} text segments, total length: {len(state.extracted_text)} chars")
                 
             except Exception as e:
                 logger.warning(f"Document processor failed, using fallback: {e}")

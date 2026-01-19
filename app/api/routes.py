@@ -1,3 +1,4 @@
+# routes.py - FIXED VERSION
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import List, Optional, Dict, Any
@@ -152,7 +153,8 @@ async def process_document(
         # Update UI state
         if document_id in ui_states:
             ui_state = ui_states[document_id]
-            ui_state.current_step = ProcessingStep.PROCESSING
+            # ✅ FIXED: Use string instead of ProcessingStep.PROCESSING
+            ui_state.current_step = "processing"
             ui_state.overall_progress = 0.3
             ui_state.user_message = "Processing started with all agents"
             ui_state.next_action = "Wait for processing to complete"
@@ -187,7 +189,8 @@ async def process_document(
         # Update UI state with agent outputs
         if document_id in ui_states:
             ui_state = ui_states[document_id]
-            ui_state.current_step = ProcessingStep.RESULTS
+            # ✅ FIXED: Use string instead of ProcessingStep.RESULTS
+            ui_state.current_step = "results"
             ui_state.overall_progress = 1.0
             ui_state.user_message = "Processing completed successfully"
             ui_state.next_action = "View results"
@@ -245,7 +248,8 @@ async def process_document(
         
         # Update UI state with error
         if document_id in ui_states:
-            ui_states[document_id].current_step = ProcessingStep.ERROR
+            # ✅ FIXED: Use string instead of ProcessingStep.ERROR
+            ui_states[document_id].current_step = "error"
             ui_states[document_id].user_message = f"Processing failed: {str(e)}"
             ui_states[document_id].next_action = "Try again or upload a new document"
             ui_states[document_id].can_proceed = True
@@ -270,7 +274,8 @@ async def process_document_background(document_id: str, file_path: str):
         # Update UI state
         if document_id in ui_states:
             ui_state = ui_states[document_id]
-            ui_state.current_step = ProcessingStep.PROCESSING
+            # ✅ FIXED: Use string instead of ProcessingStep.PROCESSING
+            ui_state.current_step = "processing"
             ui_state.overall_progress = 0.3
             ui_state.user_message = "Processing document with AI agents"
             ui_state.next_action = "Processing in progress..."
@@ -300,7 +305,8 @@ async def process_document_background(document_id: str, file_path: str):
         # Update UI state
         if document_id in ui_states:
             ui_state = ui_states[document_id]
-            ui_state.current_step = ProcessingStep.RESULTS
+            # ✅ FIXED: Use string instead of ProcessingStep.RESULTS
+            ui_state.current_step = "results"
             ui_state.overall_progress = 1.0
             ui_state.user_message = "Processing completed successfully"
             ui_state.next_action = "View analysis results"
@@ -336,7 +342,8 @@ async def process_document_background(document_id: str, file_path: str):
         
         # Update UI state with error
         if document_id in ui_states:
-            ui_states[document_id].current_step = ProcessingStep.ERROR
+            # ✅ FIXED: Use string instead of ProcessingStep.ERROR
+            ui_states[document_id].current_step = "error"
             ui_states[document_id].user_message = f"Processing failed: {str(e)}"
             ui_states[document_id].next_action = "Try again or upload a new document"
             ui_states[document_id].can_proceed = True

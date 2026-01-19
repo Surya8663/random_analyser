@@ -376,15 +376,17 @@ def render_sidebar(ui: DocumentIntelligenceUI):
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         
-        # Recent Documents
+        # ✅ FIXED: Recent Documents with unique keys
         if 'recent_docs' in st.session_state and st.session_state['recent_docs']:
             st.markdown("### 📁 Recent Documents")
-            for doc in st.session_state['recent_docs'][:3]:
+            for i, doc in enumerate(st.session_state['recent_docs'][:3]):
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.text(f"📄 {doc.get('name', 'Document')[:15]}...")
+                    doc_name = doc.get('name', f'Document_{doc["id"][:8]}')
+                    st.text(f"📄 {doc_name[:15]}...")
                 with col2:
-                    if st.button("↗️", key=f"open_{doc['id']}"):
+                    # ✅ FIX: Unique key with index
+                    if st.button("↗️", key=f"open_recent_{i}_{doc['id'][:8]}"):
                         st.session_state['document_id'] = doc['id']
                         st.session_state['current_step'] = "results"
                         st.rerun()
@@ -406,9 +408,8 @@ def render_file_upload():
     </div>
     """, unsafe_allow_html=True)
     
-    # File uploader with drag & drop support
     uploaded_files = st.file_uploader(
-        "",
+        "Upload documents",
         type=['pdf', 'png', 'jpg', 'jpeg', 'doc', 'docx', 'txt', 'csv'],
         accept_multiple_files=True,
         help="Upload multiple documents for analysis",
@@ -721,6 +722,7 @@ def render_processing_view(ui: DocumentIntelligenceUI):
                     'name': f"Document_{current_document_id[:8]}",
                     'timestamp': datetime.now().isoformat()
                 })
+                # Keep only last 10 documents
                 st.session_state['recent_docs'] = st.session_state['recent_docs'][:10]
         
         # Move to next document or finish
