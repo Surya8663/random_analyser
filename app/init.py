@@ -1,31 +1,24 @@
 """
 Vision-Fusion Document Intelligence System
-Main package initialization
+
+A multi-modal document analysis system combining:
+- Computer Vision for layout and element detection
+- OCR for text extraction
+- Multi-Agent system for comprehensive analysis
+- RAG for semantic search and querying
 """
 
 __version__ = "1.0.0"
-__author__ = "gomathi"
+__author__ = "AI Agents Builder System"
+__description__ = "Multi-Modal Document Intelligence Platform"
 
-# Export main components for easy access
+# Export main components
+from app.core.config import settings
+from app.agents.orchestrator import AgentOrchestrator
+from app.rag.retriever import MultiModalRetriever
+
 __all__ = [
-    "AgentOrchestrator",
-    "ProcessingState",
-    "settings"
+    'settings',
+    'AgentOrchestrator',
+    'MultiModalRetriever'
 ]
-
-# Import critical components to ensure they're available
-try:
-    from app.core.config import settings
-    from app.core.models import ProcessingState
-    from app.agents.orchestrator import AgentOrchestrator
-    
-    # Test that imports work
-    _ = settings.APP_NAME
-    
-    print(f"✅ {settings.APP_NAME} v{settings.VERSION} initialized successfully")
-    
-except ImportError as e:
-    print(f"❌ Failed to initialize app package: {e}")
-    raise
-except Exception as e:
-    print(f"⚠️ Warning during app initialization: {e}")

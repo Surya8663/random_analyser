@@ -1,20 +1,27 @@
 """
-Agents package for multi-agent document intelligence system
+Multi-Agent System for Document Intelligence
+
+This package contains all agents for document processing:
+- Quality assessment
+- Document classification
+- Visual element detection
+- OCR and text analysis
+- Entity extraction
+- Semantic reasoning
+- Cross-modal alignment
+- Confidence arbitration
+- Consistency checking
+- Contradiction detection
+- Risk assessment
+- Explanation generation
+- Review recommendations
 """
 
+from app.agents.orchestrator import AgentOrchestrator
+from app.agents.fusion_agent import ValidationAgent
+
+# Agent implementations (imported in orchestrator)
 __all__ = [
-    "AgentOrchestrator",
-    "ValidationAgent",
-    "DocumentQualityAgent",
-    "DocumentTypeClassifier",
-    "VisualElementDetector"
+    'AgentOrchestrator',
+    'ValidationAgent'
 ]
-
-# Define agent interfaces for type checking
-class BaseAgent:
-    """Base class for all agents"""
-    async def __call__(self, state):
-        raise NotImplementedError("Agents must implement __call__ method")
-
-# Note: Actual agent implementations are imported dynamically by the orchestrator
-# This file provides type hints and documentation

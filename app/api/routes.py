@@ -1,106 +1,25 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
 import uuid
 import shutil
+import json
 from datetime import datetime
-import traceback
-import json 
+import asyncio
 
 from app.core.config import settings
+from app.agents.orchestrator import AgentOrchestrator
+from app.rag.retriever import MultiModalRetriever
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 router = APIRouter()
 
-# Initialize components with robust error handling
-# Initialize components with robust error handling
-try:
-    from app.agents.orchestrator import AgentOrchestrator
-    orchestrator = AgentOrchestrator()
-    logger.info("✅ AgentOrchestrator initialized successfully")
-except Exception as e:
-    logger.error(f"❌ Failed to initialize AgentOrchestrator: {e}")
-    logger.error(traceback.format_exc())
-    
-    # Create a minimal orchestrator as fallback
-    class MinimalOrchestrator:
-        async def process_document(self, images, file_path=None):
-            import uuid
-            from datetime import datetime
-            return {
-                "success": True,
-                "document_id": str(uuid.uuid4()),
-                "document_type": "UNKNOWN",
-                "extracted_fields": {
-                    "info": {
-                        "value": f"Document processed in fallback mode: {file_path or 'unknown'}",
-                        "confidence": 0.5,
-                        "sources": ["fallback"],
-                        "modalities": ["textual"]
-                    },
-                    "sample_data": {
-                        "value": {"test": "This is sample data from fallback mode"},
-                        "confidence": 0.3,
-                        "sources": ["test"],
-                        "modalities": ["metadata"]
-                    }
-                },
-                "validation_results": {
-                    "contradictions": [],
-                    "risk_score": 0.3,
-                    "integrity_score": 0.7
-                },
-                "explanations": {"processing": "Running in fallback mode"},
-                "recommendations": ["System is running in basic mode"],
-                "processing_metadata": {
-                    "mode": "fallback",
-                    "timestamp": datetime.now().isoformat()
-                },
-                "errors": []
-            }
-    
-    orchestrator = MinimalOrchestrator()
-    logger.warning("⚠️ Using fallback orchestrator")
-
-# Initialize retriever if available
-try:
-    from app.rag.retriever import MultiModalRetriever
-    retriever = MultiModalRetriever()
-    logger.info("✅ MultiModalRetriever initialized successfully")
-except Exception as e:
-    logger.warning(f"⚠️ MultiModalRetriever not available: {e}")
-    retriever = None
-
-# ... rest of the routes.py file continues as before ...
-
-# Store processing status (in production, use Redis or database)
+# Store processing status and results (in production, use Redis)
 processing_status = {}
-
-def validate_orchestrator():
-    """Validate that orchestrator is available"""
-    if orchestrator is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Document processing service is unavailable"
-        )
-
-@router.get("/quick-test")
-async def quick_test():
-    """Quick test endpoint that returns immediately"""
-    return {
-        "status": "ok",
-        "message": "API is responsive",
-        "timestamp": datetime.now().isoformat(),
-        "endpoints": {
-            "upload": "/api/v1/upload",
-            "status": "/api/v1/status/{id}",
-            "results": "/api/v1/results/{id}",
-            "health": "/health"
-        }
-    }
+processing_results = {}
 
 @router.post("/upload")
 async def upload_document(
@@ -109,18 +28,16 @@ async def upload_document(
 ):
     """
     Upload a document for processing
-    
-    Supports PDF and image files
     """
     try:
-        logger.info(f"Upload request received for file: {file.filename}")
+        logger.info(f"📤 Upload request received for file: {file.filename}")
         
-        # Validate file type quickly
+        # Validate file type
         file_ext = os.path.splitext(file.filename)[1].lower()
         if file_ext not in settings.ALLOWED_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail=f"File type {file_ext} not supported. Allowed: {settings.ALLOWED_EXTENSIONS}"
+                detail=f"File type {file_ext} not supported. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}"
             )
         
         # Generate unique document ID
@@ -130,40 +47,40 @@ async def upload_document(
         upload_dir = os.path.join(settings.UPLOAD_DIR, document_id)
         os.makedirs(upload_dir, exist_ok=True)
         
-        # Save uploaded file (quick operation)
+        # Save uploaded file
         file_path = os.path.join(upload_dir, f"original{file_ext}")
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        logger.info(f"File saved to {file_path}")
+        logger.info(f"✅ File saved to {file_path}")
         
-        # IMMEDIATELY return response, start processing in background
-        # Don't wait for background task to complete
+        # Initialize status
+        processing_status[document_id] = {
+            "status": "uploaded",
+            "timestamp": datetime.now().isoformat(),
+            "filename": file.filename,
+            "file_path": file_path
+        }
+        
+        # Start background processing
         background_tasks.add_task(
             process_document_background,
             document_id,
             file_path
         )
         
-        # Set initial status
-        processing_status[document_id] = {
-            "status": "uploaded",
-            "timestamp": datetime.now().isoformat()
-        }
-        
         return {
             "success": True,
             "document_id": document_id,
             "message": "Document uploaded and processing started",
-            "status_endpoint": f"/api/v1/status/{document_id}",
-            "results_endpoint": f"/api/v1/results/{document_id}"
+            "filename": file.filename,
+            "status_endpoint": f"/api/v1/status/{document_id}"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Upload failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.post("/process")
@@ -172,14 +89,10 @@ async def process_document(
     reprocess: bool = False
 ):
     """
-    Trigger document processing
-    
-    Can be used to reprocess an already uploaded document
+    Trigger document processing or reprocessing
     """
     try:
-        validate_orchestrator()
-        
-        logger.info(f"Process request for document: {document_id}")
+        logger.info(f"⚙️ Process request for document: {document_id}")
         
         # Check if document exists
         doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
@@ -203,22 +116,21 @@ async def process_document(
         
         file_path = os.path.join(doc_dir, original_files[0])
         
+        # Update status
+        processing_status[document_id] = {
+            "status": "processing",
+            "timestamp": datetime.now().isoformat(),
+            "reprocess": reprocess
+        }
+        
         # Process document
-        result = await orchestrator.process_document([], file_path)
+        from app.main import app
+        processor = app.state.document_processor
         
-        # VALIDATE RESULT (CRITICAL FIX)
-        if not result or 'success' not in result:
-            logger.error(f"Invalid result from orchestrator: {result}")
-            raise HTTPException(
-                status_code=500,
-                detail="Document processing failed: Invalid response from orchestrator"
-            )
+        result = await processor.process_document(file_path, document_id)
         
-        # Save result
-        result_file = os.path.join(doc_dir, "processing_result.json")
-        import json
-        with open(result_file, "w") as f:
-            json.dump(result, f, indent=2)
+        # Store results
+        processing_results[document_id] = result
         
         # Update status
         processing_status[document_id] = {
@@ -227,25 +139,39 @@ async def process_document(
             "success": result.get("success", False)
         }
         
-        logger.info(f"Processing completed for {document_id}: success={result.get('success')}")
+        # Index in RAG if successful
+        if result.get("success"):
+            try:
+                # Extract text content for indexing
+                text_content = ""
+                if "text_results" in result:
+                    for page_result in result["text_results"].values():
+                        text_content += page_result.get("text", "") + "\n"
+                
+                if text_content and hasattr(app.state, 'retriever') and app.state.retriever:
+                    await app.state.retriever.index_document(
+                        document_id=document_id,
+                        text_content=text_content,
+                        metadata={
+                            "filename": original_files[0],
+                            "processing_time": datetime.now().isoformat()
+                        }
+                    )
+                    logger.info(f"✅ Document {document_id} indexed in RAG")
+            except Exception as e:
+                logger.warning(f"RAG indexing failed for {document_id}: {e}")
         
         return {
             "success": True,
             "document_id": document_id,
             "processing_complete": True,
-            "result_available": True,
-            "result_summary": {
-                "fields_extracted": len(result.get("extracted_fields", {})),
-                "has_errors": len(result.get("errors", [])) > 0,
-                "integrity_score": result.get("validation_results", {}).get("integrity_score", 0)
-            }
+            "result_available": True
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Processing failed: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Processing failed: {e}", exc_info=True)
         
         # Update status with error
         processing_status[document_id] = {
@@ -261,13 +187,7 @@ async def query_document(
     query_request: dict
 ):
     """
-    Query processed documents
-    
-    Example request:
-    {
-        "document_id": "doc_123",
-        "question": "What does the chart imply about revenue?"
-    }
+    Query processed documents using RAG
     """
     try:
         document_id = query_request.get("document_id")
@@ -279,50 +199,78 @@ async def query_document(
                 detail="document_id and question are required"
             )
         
-        logger.info(f"Query request: document={document_id}, question={question[:50]}...")
+        logger.info(f"🔍 Query request: document={document_id}, question={question[:50]}...")
         
-        # Load processing results
-        doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
-        result_file = os.path.join(doc_dir, "processing_result.json")
-        
-        if not os.path.exists(result_file):
+        # Check if document exists and is processed
+        if document_id not in processing_results:
             raise HTTPException(
                 status_code=404,
-                detail=f"Processing results not found for document {document_id}"
+                detail=f"Document {document_id} not found or not processed"
             )
         
-        import json
-        with open(result_file, "r") as f:
-            processing_results = json.load(f)
+        results = processing_results[document_id]
         
-        # Validate processing results
-        if not processing_results or 'success' not in processing_results:
+        # Get retriever from app state
+        from app.main import app
+        if not hasattr(app.state, 'retriever'):
             raise HTTPException(
-                status_code=500,
-                detail=f"Invalid processing results for document {document_id}"
+                status_code=503,
+                detail="RAG system not available"
             )
         
-        # Extract relevant information for answering
-        extracted_data = processing_results
+        # Perform RAG search
+        rag_results = await app.state.retriever.search_documents(
+            query=question,
+            filters={"document_id": document_id},
+            limit=3
+        )
         
-        # Generate answer
-        answer = generate_answer(question, extracted_data)
+        # Generate answer using retrieved context
+        context_text = ""
+        sources = []
+        
+        if rag_results:
+            for i, result in enumerate(rag_results[:3]):
+                context_text += f"[Source {i+1}]: {result.get('text', '')}\n\n"
+                sources.append({
+                    "score": result.get("score", 0),
+                    "text_preview": result.get("text", "")[:200] + "..."
+                })
+        
+        # Combine with extracted fields for better answer
+        extracted_info = ""
+        if "text_results" in results:
+            for page_num, page_data in results["text_results"].items():
+                extracted_info += f"Page {page_num}: {page_data.get('text', '')[:200]}...\n"
+        
+        # Generate answer (simplified - in production use LLM)
+        if context_text or extracted_info:
+            answer = f"Based on the document analysis:\n\n"
+            
+            if extracted_info:
+                answer += f"Extracted information:\n{extracted_info}\n"
+            
+            if context_text:
+                answer += f"Relevant context from document:\n{context_text[:1000]}..."
+            
+            answer += f"\n\nAnswer to your question '{question}': The document contains relevant information as shown above."
+        else:
+            answer = f"Unable to find specific information about '{question}' in the document."
         
         return {
             "success": True,
             "document_id": document_id,
             "question": question,
             "answer": answer,
-            "confidence": 0.8,
-            "sources": ["extracted_fields", "validation_results"],
-            "response_timestamp": datetime.now().isoformat()
+            "confidence": 0.7 if context_text or extracted_info else 0.3,
+            "sources": sources,
+            "has_context": bool(context_text or extracted_info)
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Query failed: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 @router.get("/results/{document_id}")
@@ -331,48 +279,42 @@ async def get_results(document_id: str):
     Get processing results for a document
     """
     try:
-        logger.info(f"Results request for document: {document_id}")
+        logger.info(f"📄 Results request for document: {document_id}")
         
-        doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
-        result_file = os.path.join(doc_dir, "processing_result.json")
+        # Check if results exist
+        if document_id not in processing_results:
+            # Check if file exists but not processed
+            doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
+            if os.path.exists(doc_dir):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Document {document_id} found but not processed yet"
+                )
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Document {document_id} not found"
+                )
         
-        if not os.path.exists(result_file):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Results not found for document {document_id}"
-            )
-        
-        import json
-        with open(result_file, "r") as f:
-            results = json.load(f)
-        
-        # VALIDATE RESULTS (CRITICAL FIX)
-        if not results:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Empty results for document {document_id}"
-            )
-        
-        # Add status information
+        results = processing_results[document_id]
         status = processing_status.get(document_id, {"status": "unknown"})
         
-        response = {
+        # Add document content preview
+        enriched_results = results.copy()
+        enriched_results["status"] = status["status"]
+        enriched_results["filename"] = status.get("filename", "")
+        
+        return {
             "success": True,
             "document_id": document_id,
             "status": status["status"],
-            "results": results,
-            "retrieved_at": datetime.now().isoformat()
+            "results": enriched_results
         }
-        
-        logger.info(f"Results retrieved for {document_id}: success={results.get('success')}")
-        
-        return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Results retrieval failed: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Results retrieval failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Results retrieval failed: {str(e)}")
 
 @router.get("/status/{document_id}")
@@ -387,188 +329,36 @@ async def get_status(document_id: str):
             # Check if document directory exists
             doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
             if os.path.exists(doc_dir):
-                status = {"status": "uploaded", "timestamp": datetime.now().isoformat()}
+                status = {
+                    "status": "uploaded",
+                    "timestamp": datetime.fromtimestamp(os.path.getctime(doc_dir)).isoformat()
+                }
             else:
-                status = {"status": "not_found", "timestamp": datetime.now().isoformat()}
+                status = {
+                    "status": "not_found",
+                    "timestamp": datetime.now().isoformat()
+                }
         
-        response = {
+        return {
             "document_id": document_id,
             "status": status["status"],
-            "timestamp": status.get("timestamp", datetime.now().isoformat()),
-            "error": status.get("error"),
-            "success": status.get("success", status["status"] == "completed")
+            "timestamp": status.get("timestamp"),
+            "filename": status.get("filename", ""),
+            "error": status.get("error")
         }
-        
-        return response
         
     except Exception as e:
-        logger.error(f"Status retrieval failed: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Status retrieval failed: {str(e)}")
-
-@router.get("/visualize/{document_id}")
-async def visualize_document(document_id: str):
-    """
-    Generate visualization of document with detected elements
-    Returns annotated image or visualization data
-    """
-    try:
-        logger.info(f"Visualization request for document: {document_id}")
-        
-        # Check if document exists
-        doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
-        if not os.path.exists(doc_dir):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Document {document_id} not found"
-            )
-        
-        # Check for processing results
-        result_file = os.path.join(doc_dir, "processing_result.json")
-        if not os.path.exists(result_file):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Processing results not found for document {document_id}"
-            )
-        
-        # Load results
-        import json
-        with open(result_file, "r") as f:
-            results = json.load(f)
-        
-        # Check for original image
-        original_files = [
-            f for f in os.listdir(doc_dir) 
-            if f.startswith("original") and f.lower().endswith(('.png', '.jpg', '.jpeg'))
-        ]
-        
-        visualization_data = {
-            "document_id": document_id,
-            "has_original_image": len(original_files) > 0,
-            "detected_elements": [],
-            "visualization_available": False
-        }
-        
-        # Extract detected elements from results
-        extracted_fields = results.get("extracted_fields", {})
-        element_count = 0
-        
-        # Count different types of elements
-        element_types = {}
-        for field_name in extracted_fields.keys():
-            if "chart" in field_name.lower():
-                element_types["chart"] = element_types.get("chart", 0) + 1
-                element_count += 1
-            elif "table" in field_name.lower():
-                element_types["table"] = element_types.get("table", 0) + 1
-                element_count += 1
-        
-        visualization_data.update({
-            "element_count": element_count,
-            "visualization_available": element_count > 0,
-            "elements_by_type": element_types,
-            "extracted_fields_count": len(extracted_fields)
-        })
-        
-        return {
-            "success": True,
-            "visualization": visualization_data
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Visualization failed: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Visualization failed: {str(e)}")
-
-@router.post("/rag/index")
-async def index_document(
-    document_id: str,
-    background_tasks: BackgroundTasks
-):
-    """
-    Index a processed document in the RAG system
-    """
-    try:
-        if retriever is None:
-            raise HTTPException(
-                status_code=503,
-                detail="RAG indexing service is unavailable"
-            )
-        
-        logger.info(f"RAG index request for document: {document_id}")
-        
-        # Load processing results
-        doc_dir = os.path.join(settings.UPLOAD_DIR, document_id)
-        result_file = os.path.join(doc_dir, "processing_result.json")
-        
-        if not os.path.exists(result_file):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Processing results not found for document {document_id}"
-            )
-        
-        import json
-        with open(result_file, "r") as f:
-            processing_results = json.load(f)
-        
-        # Extract text content for indexing
-        text_content = extract_text_for_indexing(processing_results)
-        
-        if not text_content or len(text_content.strip()) < 10:
-            raise HTTPException(
-                status_code=400,
-                detail="Not enough text content for indexing"
-            )
-        
-        # Extract images if available
-        images = []
-        
-        # Start background indexing
-        background_tasks.add_task(
-            index_document_background,
-            document_id,
-            text_content,
-            images,
-            processing_results
-        )
-        
-        return {
-            "success": True,
-            "document_id": document_id,
-            "message": "Document indexing started",
-            "text_length": len(text_content)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"RAG indexing request failed: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"RAG indexing request failed: {str(e)}")
+        logger.error(f"❌ Status retrieval failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/rag/search")
-async def search_documents(
+async def rag_search(
     search_request: dict
 ):
     """
-    Search indexed documents
-    
-    Example request:
-    {
-        "query": "revenue chart contradiction",
-        "query_type": "text",
-        "limit": 5
-    }
+    Search across indexed documents using RAG
     """
     try:
-        if retriever is None:
-            raise HTTPException(
-                status_code=503,
-                detail="RAG search service is unavailable"
-            )
-        
         query = search_request.get("query")
         query_type = search_request.get("query_type", "text")
         limit = search_request.get("limit", 5)
@@ -579,209 +369,82 @@ async def search_documents(
                 detail="query is required"
             )
         
-        logger.info(f"RAG search: {query[:50]}...")
+        logger.info(f"🔎 RAG search: {query[:50]}...")
+        
+        # Get retriever from app state
+        from app.main import app
+        if not hasattr(app.state, 'retriever'):
+            raise HTTPException(
+                status_code=503,
+                detail="RAG system not available"
+            )
         
         # Perform search
-        results = await retriever.search_documents(
+        results = await app.state.retriever.search_documents(
             query=query,
             query_type=query_type,
             limit=limit
         )
         
+        # Format results
+        formatted_results = []
+        for result in results:
+            formatted_results.append({
+                "document_id": result.get("document_id", "unknown"),
+                "score": result.get("score", 0),
+                "text": result.get("text", "")[:500],
+                "metadata": result.get("metadata", {})
+            })
+        
         return {
             "success": True,
             "query": query,
-            "results": results,
-            "count": len(results),
-            "search_timestamp": datetime.now().isoformat()
+            "results": formatted_results,
+            "count": len(formatted_results)
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"RAG search failed: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ RAG search failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"RAG search failed: {str(e)}")
 
-def generate_answer(question: str, extracted_data: dict) -> str:
-    """Generate answer from extracted data with improved logic"""
-    
-    # Extract relevant parts from the data
-    extracted_fields = extracted_data.get("extracted_fields", {})
-    validation_results = extracted_data.get("validation_results", {})
-    contradictions = validation_results.get("contradictions", [])
-    
-    # Simple rule-based answering
-    if "chart" in question.lower():
-        chart_fields = [f for f in extracted_fields.keys() if "chart" in f.lower()]
-        if chart_fields:
-            return f"Found {len(chart_fields)} chart(s) in the document. Chart fields: {', '.join(chart_fields)}"
-        else:
-            return "No charts were detected in this document."
-    
-    elif "table" in question.lower():
-        table_fields = [f for f in extracted_fields.keys() if "table" in f.lower()]
-        if table_fields:
-            return f"Found {len(table_fields)} table(s) in the document. Table fields: {', '.join(table_fields)}"
-        else:
-            return "No tables were detected in this document."
-    
-    elif "contradiction" in question.lower() or "inconsistency" in question.lower():
-        if contradictions:
-            return f"Found {len(contradictions)} contradiction(s) in the document. Types: {', '.join([c.get('type', 'unknown') for c in contradictions])}"
-        else:
-            return "No contradictions were found in the document."
-    
-    elif "risk" in question.lower():
-        risk_score = validation_results.get("risk_score", 0)
-        return f"The document has a risk score of {risk_score:.2f} (on a scale of 0 to 1)."
-    
-    elif "integrity" in question.lower():
-        integrity_score = validation_results.get("integrity_score", 0)
-        return f"The document integrity score is {integrity_score:.2f} (on a scale of 0 to 1)."
-    
-    elif "type" in question.lower() and "document" in question.lower():
-        doc_type = extracted_data.get("document_type", "unknown")
-        return f"The document type is: {doc_type}"
-    
-    else:
-        # General answer
-        field_count = len(extracted_fields)
-        if field_count > 0:
-            sample_fields = list(extracted_fields.keys())[:3]
-            return f"The document analysis extracted {field_count} fields including: {', '.join(sample_fields)}. Ask about specific fields for more details."
-        else:
-            return "The document analysis did not extract any specific fields. This could be due to document complexity or processing limitations."
-
-def extract_text_for_indexing(processing_results: dict) -> str:
-    """Extract text content for RAG indexing"""
-    text_parts = []
-    
-    # Extract from extracted fields
-    extracted_fields = processing_results.get("extracted_fields", {})
-    for field_name, field_data in extracted_fields.items():
-        value = field_data.get("value", "")
-        if value:
-            if isinstance(value, (list, dict)):
-                text_parts.append(f"{field_name}: {json.dumps(value)}")
-            else:
-                text_parts.append(f"{field_name}: {value}")
-    
-    # Extract from document type
-    doc_type = processing_results.get("document_type", "unknown")
-    text_parts.append(f"Document type: {doc_type}")
-    
-    # Extract from validation results
-    validation_results = processing_results.get("validation_results", {})
-    if validation_results.get("contradictions"):
-        text_parts.append(f"Contradictions found: {len(validation_results['contradictions'])}")
-    
-    integrity_score = validation_results.get("integrity_score", 0)
-    text_parts.append(f"Document integrity score: {integrity_score:.2f}")
-    
-    return "\n".join(text_parts)
-
 async def process_document_background(document_id: str, file_path: str):
-    """Background task for document processing - SIMPLIFIED"""
+    """Background task for document processing"""
     try:
-        logger.info(f"Starting background processing for {document_id}")
+        logger.info(f"🔄 Starting background processing for {document_id}")
         
-        # Update status to processing
+        # Update status
         processing_status[document_id] = {
             "status": "processing",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "filename": os.path.basename(file_path)
         }
         
-        # SIMPLE PROCESSING - avoid complex operations
-        try:
-            # Read file to get bytes
-            with open(file_path, 'rb') as f:
-                file_bytes = f.read()
-            
-            # Process with orchestrator
-            result = await orchestrator.process_document([file_bytes], file_path)
-            
-            # Validate result
-            if not result or 'success' not in result:
-                logger.error(f"Invalid result from orchestrator for {document_id}")
-                raise ValueError("Invalid orchestrator response")
-            
-            # Save result
-            doc_dir = os.path.dirname(file_path)
-            result_file = os.path.join(doc_dir, "processing_result.json")
-            
-            import json
-            with open(result_file, "w") as f:
-                json.dump(result, f, indent=2)
-            
-            # Update status
-            processing_status[document_id] = {
-                "status": "completed",
-                "timestamp": datetime.now().isoformat(),
-                "success": result.get("success", False)
-            }
-            
-            logger.info(f"Background processing completed for {document_id}: success={result.get('success')}")
-            
-        except Exception as processing_error:
-            logger.error(f"Processing failed for {document_id}: {processing_error}")
-            
-            # Create a simple error result
-            error_result = {
-                "success": False,
-                "error": str(processing_error),
-                "document_id": document_id,
-                "extracted_fields": {},
-                "errors": [str(processing_error)]
-            }
-            
-            # Save error result
-            doc_dir = os.path.dirname(file_path)
-            result_file = os.path.join(doc_dir, "processing_result.json")
-            
-            import json
-            with open(result_file, "w") as f:
-                json.dump(error_result, f, indent=2)
-            
-            # Update status with error
-            processing_status[document_id] = {
-                "status": "error",
-                "timestamp": datetime.now().isoformat(),
-                "error": str(processing_error)
-            }
+        # Get processor from app state
+        from app.main import app
+        processor = app.state.document_processor
+        
+        # Process document
+        result = await processor.process_document(file_path, document_id)
+        
+        # Store results
+        processing_results[document_id] = result
+        
+        # Update status
+        processing_status[document_id] = {
+            "status": "completed",
+            "timestamp": datetime.now().isoformat(),
+            "success": result.get("success", False)
+        }
+        
+        logger.info(f"✅ Background processing completed for {document_id}")
         
     except Exception as e:
-        logger.error(f"Background processing failed for {document_id}: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Background processing failed for {document_id}: {e}", exc_info=True)
         
         processing_status[document_id] = {
             "status": "error",
             "timestamp": datetime.now().isoformat(),
-            "error": f"Background processing failed: {str(e)}"
+            "error": str(e)
         }
-
-async def index_document_background(document_id: str, text_content: str, 
-                                   images: list, metadata: dict):
-    """Background task for document indexing with error handling"""
-    try:
-        if retriever is None:
-            logger.error(f"Cannot index document {document_id}: retriever is None")
-            return
-        
-        logger.info(f"Starting background indexing for {document_id}")
-        
-        success = await retriever.index_document(
-            document_id=document_id,
-            text_content=text_content,
-            images=images,
-            metadata=metadata
-        )
-        
-        if success:
-            logger.info(f"Background indexing completed for {document_id}")
-        else:
-            logger.error(f"Background indexing failed for {document_id}")
-        
-    except Exception as e:
-        logger.error(f"Background indexing failed for {document_id}: {e}")
-        logger.error(traceback.format_exc())

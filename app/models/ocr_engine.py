@@ -1,10 +1,8 @@
 import pytesseract
 import cv2
 import numpy as np
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass
-from PIL import Image
-from app.config import settings
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -28,65 +26,77 @@ class OCRResult:
     metadata: Dict[str, Any]
 
 class HybridOCREngine:
-    """Hybrid OCR Engine with Tesseract + optional PaddleOCR fallback"""
+    """Hybrid OCR Engine with Tesseract"""
     
     def __init__(self):
-        self.tesseract_config = '--oem 3 --psm 6'
-        self.confidence_threshold = settings.OCR_CONFIDENCE_THRESHOLD
-        self.paddle_ocr = None
-        
-        # Try to import PaddleOCR (optional)
         try:
-            from paddleocr import PaddleOCR
-            self.paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
-            logger.info("PaddleOCR loaded successfully (optional fallback)")
-        except ImportError:
-            logger.info("PaddleOCR not installed, using Tesseract only")
+            from app.core.config import settings
+            self.confidence_threshold = getattr(settings, 'OCR_CONFIDENCE_THRESHOLD', 0.7)
+            tesseract_path = getattr(settings, 'TESSERACT_PATH', None)
+            
+            if tesseract_path:
+                pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                logger.info(f"✅ Tesseract path set: {tesseract_path}")
         except Exception as e:
-            logger.warning(f"PaddleOCR initialization failed: {e}")
+            logger.warning(f"⚠️ Failed to load settings: {e}")
+            self.confidence_threshold = 0.7
+        
+        self.tesseract_config = '--oem 3 --psm 6'
+        
+        # Try to find Tesseract
+        try:
+            pytesseract.get_tesseract_version()
+            logger.info("✅ Tesseract OCR engine initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Tesseract not found: {e}")
+            logger.info("💡 Install instructions in README")
+            raise
+    
+    # Rest of the class remains the same...
+    # [Keep all other methods as they were]
+    
+    def preprocess_image(self, image: np.ndarray) -> np.ndarray:
+        """Preprocess image for better OCR results"""
+        try:
+            # Convert to grayscale if needed
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image.copy()
+            
+            # Denoise
+            denoised = cv2.medianBlur(gray, 3)
+            
+            # Apply adaptive thresholding
+            processed = cv2.adaptiveThreshold(
+                denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY, 11, 2
+            )
+            
+            return processed
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Image preprocessing failed: {e}")
+            return image
     
     def process_image(self, image: np.ndarray, page_num: int = 0) -> OCRResult:
         """
         Process image with OCR
         
         Args:
-            image: Input image
+            image: Input image (OpenCV format)
             page_num: Page number
             
         Returns:
             OCRResult object
         """
-        # Always use Tesseract first
-        tesseract_result = self._process_with_tesseract(image, page_num)
-        
-        # Check if confidence is sufficient
-        if tesseract_result.average_confidence >= self.confidence_threshold:
-            logger.info(f"Tesseract confidence sufficient: {tesseract_result.average_confidence:.2f}")
-            return tesseract_result
-        
-        # Fallback to PaddleOCR if available
-        if self.paddle_ocr is not None:
-            logger.info(f"Tesseract confidence low ({tesseract_result.average_confidence:.2f}), trying PaddleOCR")
-            paddle_result = self._process_with_paddleocr(image, page_num)
-            
-            # Choose the result with higher confidence
-            if paddle_result.average_confidence > tesseract_result.average_confidence:
-                return paddle_result
-        
-        return tesseract_result
-    
-    def _process_with_tesseract(self, image: np.ndarray, page_num: int) -> OCRResult:
-        """Process image using Tesseract OCR"""
         try:
-            # Convert to PIL Image
-            if len(image.shape) == 2:
-                pil_image = Image.fromarray(image)
-            elif image.shape[2] == 3:
-                pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            elif image.shape[2] == 4:
-                pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGRA2RGB))
-            else:
-                pil_image = Image.fromarray(image[:, :, :3])
+            # Preprocess image
+            processed_image = self.preprocess_image(image)
+            
+            # Convert to PIL Image for Tesseract
+            from PIL import Image
+            pil_image = Image.fromarray(processed_image)
             
             # Get data with bounding boxes
             data = pytesseract.image_to_data(
@@ -100,10 +110,17 @@ class HybridOCREngine:
             confidences = []
             
             for i in range(len(data['text'])):
-                if data['text'][i].strip():  # Non-empty text
+                text = data['text'][i].strip()
+                if text:  # Non-empty text
+                    confidence = float(data['conf'][i])
+                    if confidence < 0:  # Tesseract uses -1 for empty
+                        continue
+                    
+                    confidence_normalized = confidence / 100.0
+                    
                     word = OCRWord(
-                        text=data['text'][i],
-                        confidence=float(data['conf'][i]) / 100.0,
+                        text=text,
+                        confidence=confidence_normalized,
                         bbox=[
                             data['left'][i],
                             data['top'][i],
@@ -121,7 +138,7 @@ class HybridOCREngine:
             # Full text
             full_text = pytesseract.image_to_string(pil_image)
             
-            return OCRResult(
+            result = OCRResult(
                 page_num=page_num,
                 text=full_text,
                 words=words,
@@ -130,74 +147,17 @@ class HybridOCREngine:
                 metadata={
                     "total_words": len(words),
                     "min_confidence": min(confidences) if confidences else 0,
-                    "max_confidence": max(confidences) if confidences else 0
+                    "max_confidence": max(confidences) if confidences else 0,
+                    "config_used": self.tesseract_config
                 }
             )
             
+            logger.debug(f"Page {page_num}: {len(words)} words, confidence: {avg_confidence:.2f}")
+            return result
+            
         except Exception as e:
-            logger.error(f"Tesseract OCR failed: {e}")
+            logger.error(f"❌ Tesseract OCR failed: {e}")
             return self._create_empty_result(page_num, "tesseract_failed")
-    
-    def _process_with_paddleocr(self, image: np.ndarray, page_num: int) -> OCRResult:
-        """Process image using PaddleOCR (if available)"""
-        try:
-            if self.paddle_ocr is None:
-                return self._create_empty_result(page_num, "paddleocr_unavailable")
-            
-            # Convert to RGB if needed
-            if len(image.shape) == 2:
-                rgb_image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-            elif image.shape[2] == 3:
-                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            elif image.shape[2] == 4:
-                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
-            else:
-                rgb_image = image
-            
-            # Run PaddleOCR
-            result = self.paddle_ocr.ocr(rgb_image, cls=True)
-            
-            words = []
-            confidences = []
-            full_text_lines = []
-            
-            if result and result[0]:
-                for line in result[0]:
-                    if line and len(line) >= 2:
-                        bbox, (text, confidence) = line[0], line[1]
-                        
-                        # Flatten bbox
-                        flat_bbox = [int(coord) for point in bbox for coord in point]
-                        
-                        word = OCRWord(
-                            text=text,
-                            confidence=confidence,
-                            bbox=flat_bbox,
-                            page_num=page_num
-                        )
-                        words.append(word)
-                        confidences.append(confidence)
-                        full_text_lines.append(text)
-            
-            # Calculate average confidence
-            avg_confidence = np.mean(confidences) if confidences else 0.0
-            
-            return OCRResult(
-                page_num=page_num,
-                text='\n'.join(full_text_lines),
-                words=words,
-                average_confidence=avg_confidence,
-                engine_used="paddleocr",
-                metadata={
-                    "total_words": len(words),
-                    "min_confidence": min(confidences) if confidences else 0,
-                    "max_confidence": max(confidences) if confidences else 0
-                }
-            )
-            
-        except Exception as e:
-            logger.error(f"PaddleOCR failed: {e}")
-            return self._create_empty_result(page_num, "paddleocr_failed")
     
     def _create_empty_result(self, page_num: int, engine: str) -> OCRResult:
         """Create empty result for failed OCR"""
@@ -214,6 +174,26 @@ class HybridOCREngine:
         """Process multiple images"""
         results = []
         for idx, image in enumerate(images):
-            result = self.process_image(image, page_num=idx)
-            results.append(result)
+            try:
+                result = self.process_image(image, page_num=idx)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"❌ OCR failed for image {idx}: {e}")
+                results.append(self._create_empty_result(idx, "processing_error"))
         return results
+    
+    def get_engine_info(self) -> Dict[str, Any]:
+        """Get information about the OCR engine"""
+        try:
+            version = pytesseract.get_tesseract_version()
+            return {
+                "tesseract_available": True,
+                "tesseract_version": version,
+                "confidence_threshold": self.confidence_threshold,
+                "default_config": self.tesseract_config
+            }
+        except:
+            return {
+                "tesseract_available": False,
+                "error": "Tesseract not found"
+            }

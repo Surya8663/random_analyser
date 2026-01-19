@@ -1,6 +1,5 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from app.rag.embeddings import EmbeddingEngine
-from app.rag.qdrant_client import QdrantManager
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -10,7 +9,49 @@ class MultiModalRetriever:
     
     def __init__(self):
         self.embedding_engine = EmbeddingEngine()
-        self.qdrant_manager = QdrantManager()
+        logger.info("✅ MultiModalRetriever initialized")
+    
+    async def initialize(self) -> bool:
+        """Initialize the retriever"""
+        try:
+            logger.info("🔄 Initializing retriever")
+            
+            # Get settings safely
+            try:
+                from app.core.config import settings
+                qdrant_host = getattr(settings, 'QDRANT_HOST', 'localhost')
+                qdrant_port = getattr(settings, 'QDRANT_PORT', 6333)
+                qdrant_collection = getattr(settings, 'QDRANT_COLLECTION', 'document_embeddings')
+            except:
+                qdrant_host = 'localhost'
+                qdrant_port = 6333
+                qdrant_collection = 'document_embeddings'
+            
+            # Check if Qdrant is available
+            try:
+                from qdrant_client import QdrantClient
+                
+                client = QdrantClient(
+                    host=qdrant_host,
+                    port=qdrant_port,
+                    timeout=10
+                )
+                # Test connection
+                client.get_collections()
+                logger.info(f"✅ Qdrant connection successful to {qdrant_host}:{qdrant_port}")
+                return True
+            except ImportError:
+                logger.warning("⚠️ Qdrant client not available")
+                return False
+            except Exception as e:
+                logger.warning(f"⚠️ Qdrant connection failed: {e}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Retriever initialization failed: {e}")
+            return False
+    
+    # Rest of the class remains the same...
+    # [Keep all other methods as they were]
     
     async def index_document(self, 
                            document_id: str,
@@ -18,7 +59,7 @@ class MultiModalRetriever:
                            images: Optional[List[Any]] = None,
                            metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Index a document in the vector database
+        Index a document in the vector database with proper chunking
         
         Args:
             document_id: Unique document identifier
@@ -30,43 +71,97 @@ class MultiModalRetriever:
             Success status
         """
         try:
-            logger.info(f"Indexing document {document_id}")
+            logger.info(f"📚 Indexing document {document_id}")
             
-            # Generate embeddings
-            text_embedding = self.embedding_engine.generate_text_embeddings(text_content)
+            if not text_content:
+                logger.warning(f"⚠️ No text content for document {document_id}")
+                return False
             
-            visual_embedding = None
-            if images and len(images) > 0:
-                visual_embedding = self.embedding_engine.generate_visual_embeddings(images[:1])[0]
+            # Chunk the text
+            chunks = self.embedding_engine.chunk_text(text_content)
             
-            # Prepare metadata
-            doc_metadata = {
-                "document_id": document_id,
-                "text_length": len(text_content),
-                "has_images": images is not None and len(images) > 0
-            }
+            if not chunks:
+                logger.warning(f"⚠️ No chunks created for document {document_id}")
+                return False
             
-            if metadata:
-                doc_metadata.update(metadata)
+            logger.info(f"📝 Created {len(chunks)} chunks for document {document_id}")
             
-            # Store in Qdrant
-            success = self.qdrant_manager.store_document(
-                document_id=document_id,
-                text_embedding=text_embedding.tolist(),
-                visual_embedding=visual_embedding.tolist() if visual_embedding is not None else None,
-                metadata=doc_metadata
-            )
+            # Generate embeddings for each chunk
+            chunk_embeddings = self.embedding_engine.generate_text_embeddings(chunks, chunk=False)
+            
+            # Prepare documents for indexing
+            documents = []
+            for i, (chunk, embedding) in enumerate(zip(chunks, chunk_embeddings)):
+                doc_metadata = {
+                    "document_id": document_id,
+                    "chunk_index": i,
+                    "chunk_count": len(chunks),
+                    "text_length": len(chunk),
+                    "has_images": images is not None and len(images) > 0
+                }
+                
+                if metadata:
+                    doc_metadata.update(metadata)
+                
+                documents.append({
+                    "id": f"{document_id}_chunk_{i}",
+                    "text": chunk,
+                    "embedding": embedding,
+                    "metadata": doc_metadata
+                })
+            
+            # Index documents in vector store
+            success = await self.vector_store.index_documents(documents)
             
             if success:
-                logger.info(f"Document {document_id} indexed successfully")
+                logger.info(f"✅ Document {document_id} indexed with {len(chunks)} chunks")
+                
+                # Index images if available
+                if images and len(images) > 0:
+                    await self._index_images(document_id, images, metadata)
             else:
-                logger.error(f"Failed to index document {document_id}")
+                logger.error(f"❌ Failed to index document {document_id}")
             
             return success
             
         except Exception as e:
-            logger.error(f"Document indexing failed: {e}")
+            logger.error(f"❌ Document indexing failed: {e}", exc_info=True)
             return False
+    
+    async def _index_images(self, document_id: str, images: List[Any], metadata: Optional[Dict[str, Any]] = None):
+        """Index document images"""
+        try:
+            logger.info(f"🖼️ Indexing images for document {document_id}")
+            
+            # Generate visual embeddings
+            visual_embeddings = self.embedding_engine.generate_visual_embeddings(images[:3])  # Limit to 3 images
+            
+            # Prepare image documents
+            image_docs = []
+            for i, (img, embedding) in enumerate(zip(images[:3], visual_embeddings)):
+                img_metadata = {
+                    "document_id": document_id,
+                    "image_index": i,
+                    "is_visual": True,
+                    "image_count": len(images)
+                }
+                
+                if metadata:
+                    img_metadata.update(metadata)
+                
+                image_docs.append({
+                    "id": f"{document_id}_image_{i}",
+                    "text": f"Image {i+1} from document {document_id}",
+                    "embedding": embedding,
+                    "metadata": img_metadata
+                })
+            
+            # Index images
+            await self.vector_store.index_documents(image_docs)
+            logger.info(f"✅ Indexed {len(image_docs)} images for document {document_id}")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Image indexing failed: {e}")
     
     async def search_documents(self, 
                              query: str,
@@ -74,7 +169,7 @@ class MultiModalRetriever:
                              filters: Optional[Dict[str, Any]] = None,
                              limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Search for documents
+        Search for documents using RAG
         
         Args:
             query: Search query
@@ -83,141 +178,151 @@ class MultiModalRetriever:
             limit: Number of results
             
         Returns:
-            List of matching documents
+            List of matching documents with scores
         """
         try:
-            logger.info(f"Searching documents with query: {query[:50]}...")
+            logger.info(f"🔍 Searching documents: {query[:50]}...")
             
-            # Generate query embedding based on type
+            # Generate query embedding
             if query_type == "text":
-                query_embedding = self.embedding_engine.generate_text_embeddings(query)[0]
-            elif query_type == "visual":
-                # For visual queries, we'd need an image input
-                # This is simplified - in production, you'd handle image queries differently
-                query_embedding = self.embedding_engine.generate_text_embeddings(
-                    f"Visual query: {query}"
-                )[0]
-            else:  # multi_modal
-                query_embedding = self.embedding_engine.generate_text_embeddings(query)[0]
+                query_embedding = self.embedding_engine.generate_text_embeddings([query], chunk=False)[0]
+            else:
+                # For other query types, use text embedding as fallback
+                query_embedding = self.embedding_engine.generate_text_embeddings([query], chunk=False)[0]
             
-            # Search in Qdrant
-            results = self.qdrant_manager.search_similar(
-                query_embedding=query_embedding.tolist(),
+            # Search in vector store
+            results = await self.vector_store.search(
+                query_embedding=query_embedding,
                 filters=filters,
-                limit=limit
+                limit=limit * 2  # Get more results for filtering
             )
             
-            logger.info(f"Found {len(results)} documents")
-            return results
+            # Group results by document and select best chunks
+            grouped_results = self._group_results_by_document(results, limit)
+            
+            logger.info(f"✅ Found {len(grouped_results)} relevant documents")
+            return grouped_results
             
         except Exception as e:
-            logger.error(f"Document search failed: {e}")
+            logger.error(f"❌ Document search failed: {e}", exc_info=True)
             return []
     
-    async def cross_modal_retrieval(self,
-                                  text_query: Optional[str] = None,
-                                  image_query: Optional[Any] = None,
-                                  limit: int = 5) -> List[Dict[str, Any]]:
+    def _group_results_by_document(self, results: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+        """Group search results by document and select best chunks"""
+        documents = {}
+        
+        for result in results:
+            doc_id = result.get("metadata", {}).get("document_id")
+            if not doc_id:
+                continue
+            
+            if doc_id not in documents:
+                documents[doc_id] = {
+                    "document_id": doc_id,
+                    "chunks": [],
+                    "max_score": result["score"],
+                    "metadata": result.get("metadata", {})
+                }
+            
+            documents[doc_id]["chunks"].append({
+                "text": result.get("text", ""),
+                "score": result["score"],
+                "chunk_index": result.get("metadata", {}).get("chunk_index"),
+                "is_visual": result.get("metadata", {}).get("is_visual", False)
+            })
+        
+        # Sort documents by max score and limit
+        sorted_docs = sorted(
+            documents.values(),
+            key=lambda x: x["max_score"],
+            reverse=True
+        )[:limit]
+        
+        # For each document, select top chunks
+        for doc in sorted_docs:
+            doc["chunks"] = sorted(
+                doc["chunks"],
+                key=lambda x: x["score"],
+                reverse=True
+            )[:3]  # Top 3 chunks per document
+        
+        return sorted_docs
+    
+    async def retrieve_for_question(self, 
+                                  question: str,
+                                  document_ids: Optional[List[str]] = None,
+                                  limit: int = 3) -> Tuple[str, List[Dict[str, Any]]]:
         """
-        Perform cross-modal retrieval
+        Retrieve relevant context for a question
         
         Args:
-            text_query: Text query
-            image_query: Image query
-            limit: Number of results
+            question: Question to answer
+            document_ids: Optional list of document IDs to search within
+            limit: Number of chunks to retrieve
             
         Returns:
-            List of matching documents
+            Tuple of (context_text, sources)
         """
         try:
-            logger.info("Performing cross-modal retrieval")
+            filters = None
+            if document_ids:
+                filters = {"document_id": {"$in": document_ids}}
             
-            # Generate embeddings for both modalities
-            text_embedding = None
-            if text_query:
-                text_embedding = self.embedding_engine.generate_text_embeddings(text_query)[0]
-            
-            visual_embedding = None
-            if image_query is not None:
-                visual_embedding = self.embedding_engine.generate_visual_embeddings([image_query])[0]
-            
-            # For cross-modal, we can search with either embedding
-            # In a more advanced system, you'd fuse them
-            query_embedding = text_embedding if text_embedding is not None else visual_embedding
-            
-            if query_embedding is None:
-                logger.error("No query provided for cross-modal retrieval")
-                return []
-            
-            # Search
-            results = self.qdrant_manager.search_similar(
-                query_embedding=query_embedding.tolist(),
-                limit=limit
+            # Search for relevant chunks
+            results = await self.search_documents(
+                query=question,
+                filters=filters,
+                limit=limit * 2  # Get more for better selection
             )
             
-            # Filter or re-rank based on multi-modal relevance
-            filtered_results = self._filter_cross_modal_results(
-                results, text_query, image_query
-            )
+            # Build context from top chunks
+            context_parts = []
+            sources = []
             
-            return filtered_results
+            for doc_result in results[:limit]:  # Top documents
+                for chunk in doc_result.get("chunks", [])[:2]:  # Top 2 chunks per doc
+                    context_parts.append(chunk["text"])
+                    sources.append({
+                        "document_id": doc_result["document_id"],
+                        "chunk_index": chunk.get("chunk_index"),
+                        "score": chunk["score"],
+                        "text_preview": chunk["text"][:200] + "..."
+                    })
+            
+            context_text = "\n\n".join(context_parts)
+            
+            return context_text, sources
             
         except Exception as e:
-            logger.error(f"Cross-modal retrieval failed: {e}")
-            return []
-    
-    def _filter_cross_modal_results(self,
-                                   results: List[Dict[str, Any]],
-                                   text_query: Optional[str],
-                                   image_query: Optional[Any]) -> List[Dict[str, Any]]:
-        """Filter results for cross-modal relevance"""
-        # Simplified filtering - in production, implement proper cross-modal scoring
-        
-        filtered = []
-        for result in results:
-            # Check if document has both text and visual content
-            has_text = result["metadata"].get("text_length", 0) > 0
-            has_images = result["metadata"].get("has_images", False)
-            
-            # Prefer documents that match both modalities
-            if text_query and image_query:
-                if has_text and has_images:
-                    result["cross_modal_score"] = result["score"] * 1.2
-                    filtered.append(result)
-            elif text_query:
-                if has_text:
-                    filtered.append(result)
-            elif image_query:
-                if has_images:
-                    filtered.append(result)
-        
-        return filtered
+            logger.error(f"❌ Context retrieval failed: {e}")
+            return "", []
     
     async def delete_document(self, document_id: str) -> bool:
         """Delete document from index"""
         try:
-            success = self.qdrant_manager.delete_document(document_id)
+            success = await self.vector_store.delete_document(document_id)
             
             if success:
-                logger.info(f"Document {document_id} deleted from index")
+                logger.info(f"🗑️ Document {document_id} deleted from index")
             else:
-                logger.error(f"Failed to delete document {document_id}")
+                logger.warning(f"⚠️ Failed to delete document {document_id}")
             
             return success
             
         except Exception as e:
-            logger.error(f"Document deletion failed: {e}")
+            logger.error(f"❌ Document deletion failed: {e}")
             return False
     
     async def get_index_stats(self) -> Dict[str, Any]:
         """Get index statistics"""
         try:
-            stats = self.qdrant_manager.get_collection_stats()
+            stats = await self.vector_store.get_stats()
+            
             return {
-                "vector_database": "Qdrant",
-                "collection_name": self.qdrant_manager.collection_name,
-                "stats": stats
+                "vector_store": "Qdrant",
+                "stats": stats,
+                "embedding_dimension": self.embedding_engine.get_embedding_dimensions()["text"]
             }
         except Exception as e:
-            logger.error(f"Failed to get index stats: {e}")
+            logger.error(f"❌ Failed to get index stats: {e}")
             return {}

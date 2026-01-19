@@ -1,7 +1,9 @@
 import os
 from typing import Optional, List
 from pydantic_settings import BaseSettings
+from app.config import settings
 
+__all__ = ['settings']
 class Settings(BaseSettings):
     # Application
     APP_NAME: str = "Vision-Fusion Document Intelligence"

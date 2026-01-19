@@ -3,12 +3,11 @@ from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 from app.utils.logger import setup_logger
 import json
-import traceback
 
 logger = setup_logger(__name__)
 
 class ValidationState(BaseModel):
-    """State for Validation Agent with explicit defaults"""
+    """State for Validation Agent"""
     document_id: str
     fused_results: Dict[str, Any] = Field(default_factory=dict)
     validation_results: Dict[str, Any] = Field(default_factory=dict)
@@ -41,331 +40,216 @@ class ValidationAgent:
         return workflow
     
     def cross_check(self, state: ValidationState) -> ValidationState:
-        """Cross-check extracted values with input validation"""
+        """Cross-check extracted values"""
         try:
-            logger.info(f"Cross-checking document {state.document_id}")
-            
-            # VALIDATE INPUTS (CRITICAL FIX)
-            if not state.fused_results:
-                error_msg = "No fused results provided for validation"
-                logger.error(error_msg)
-                state.errors.append(error_msg)
-                return state
-            
-            # Ensure fused_results has required structure
-            if 'structured_output' not in state.fused_results:
-                state.fused_results['structured_output'] = {'fields': {}}
-            
-            if 'fields' not in state.fused_results['structured_output']:
-                state.fused_results['structured_output']['fields'] = {}
+            logger.info(f"🔍 Cross-checking document {state.document_id}")
             
             validation_results = {
                 "consistency_checks": [],
                 "plausibility_checks": [],
-                "completeness_checks": []
+                "completeness_checks": [],
+                "timestamp": None
             }
             
+            # Extract fields from fused results
+            fields = {}
+            if "structured_output" in state.fused_results:
+                fields = state.fused_results["structured_output"].get("fields", {})
+            elif "extracted_fields" in state.fused_results:
+                fields = state.fused_results["extracted_fields"]
+            
             # Check field consistency
-            fields = state.fused_results['structured_output']['fields']
             for field_name, field_data in fields.items():
-                if not isinstance(field_data, dict):
-                    logger.warning(f"Invalid field data for {field_name}: {type(field_data)}")
-                    continue
-                    
-                consistency = self._check_field_consistency(field_data)
-                validation_results["consistency_checks"].append({
-                    "field": field_name,
-                    "status": consistency["status"],
-                    "details": consistency["details"]
-                })
+                if isinstance(field_data, dict):
+                    consistency = self._check_field_consistency(field_data)
+                    validation_results["consistency_checks"].append({
+                        "field": field_name,
+                        "status": consistency["status"],
+                        "details": consistency["details"],
+                        "confidence": field_data.get("confidence", 0)
+                    })
             
             # Check plausibility
             plausibility = self._check_plausibility(fields)
             validation_results["plausibility_checks"] = plausibility
             
             # Check completeness
-            completeness = self._check_completeness(fields)
+            completeness = self._check_completeness(state.fused_results)
             validation_results["completeness_checks"] = completeness
             
+            validation_results["timestamp"] = "now"
             state.validation_results = validation_results
-            logger.info(f"Completed {len(validation_results['consistency_checks'])} checks")
+            logger.info(f"✅ Completed {len(validation_results['consistency_checks'])} checks")
             
         except Exception as e:
             error_msg = f"Cross-checking failed: {str(e)}"
             logger.error(error_msg)
-            logger.error(traceback.format_exc())
             state.errors.append(error_msg)
         
         return state
     
     def _check_field_consistency(self, field_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Check consistency of a field with validation"""
-        try:
-            confidence = field_data.get("confidence", 0.0)
-            sources = field_data.get("source", "")
-            
-            if isinstance(sources, str):
-                source_list = sources.split(" + ") if " + " in sources else [sources]
-            elif isinstance(sources, list):
-                source_list = sources
-            else:
-                source_list = []
-            
-            if confidence < 0.5:
-                return {
-                    "status": "LOW_CONFIDENCE",
-                    "details": f"Confidence score {confidence:.2f} is below threshold"
-                }
-            elif len(source_list) == 1:
-                return {
-                    "status": "SINGLE_SOURCE",
-                    "details": "Field extracted from single modality only"
-                }
-            else:
-                return {
-                    "status": "CONSISTENT",
-                    "details": "Field validated across multiple modalities"
-                }
-        except Exception as e:
+        """Check consistency of a field"""
+        confidence = field_data.get("confidence", 0.0)
+        sources = field_data.get("sources", [])
+        
+        if confidence < 0.5:
             return {
-                "status": "VALIDATION_ERROR",
-                "details": f"Consistency check failed: {str(e)}"
+                "status": "LOW_CONFIDENCE",
+                "details": f"Confidence score {confidence:.2f} is below threshold"
+            }
+        elif len(sources) <= 1:
+            return {
+                "status": "SINGLE_SOURCE",
+                "details": "Field extracted from single source only"
+            }
+        else:
+            return {
+                "status": "CONSISTENT",
+                "details": f"Field validated across {len(sources)} sources"
             }
     
     def _check_plausibility(self, fields: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check plausibility of field values"""
         plausibility_checks = []
         
-        try:
-            # Check for numeric fields with reasonable values
-            for field_name, field_data in fields.items():
-                if not isinstance(field_data, dict):
-                    continue
-                    
+        for field_name, field_data in fields.items():
+            if isinstance(field_data, dict):
                 value = field_data.get("value", "")
                 
-                # Check if value contains numbers
-                if any(char.isdigit() for char in str(value)):
-                    # Extract numbers
-                    import re
-                    numbers = re.findall(r'\d+\.?\d*', str(value))
-                    
-                    if numbers:
-                        for num in numbers:
-                            try:
-                                num_float = float(num)
-                                if "amount" in field_name.lower() or "total" in field_name.lower():
-                                    if num_float > 1000000:  # Unusually large amount
-                                        plausibility_checks.append({
-                                            "field": field_name,
-                                            "issue": "UNUSUALLY_LARGE_VALUE",
-                                            "value": num_float,
-                                            "threshold": 1000000
-                                        })
-                            except ValueError:
-                                continue
-        except Exception as e:
-            logger.warning(f"Plausibility check error: {e}")
+                # Check numeric fields
+                if isinstance(value, (int, float)):
+                    # Check for unusually large/small values
+                    if "amount" in field_name.lower() or "total" in field_name.lower():
+                        if value > 1000000:
+                            plausibility_checks.append({
+                                "field": field_name,
+                                "issue": "UNUSUALLY_LARGE_VALUE",
+                                "value": value,
+                                "threshold": 1000000,
+                                "severity": "MEDIUM"
+                            })
+                        elif value < 0:
+                            plausibility_checks.append({
+                                "field": field_name,
+                                "issue": "NEGATIVE_VALUE",
+                                "value": value,
+                                "severity": "HIGH"
+                            })
+                
+                # Check date fields
+                elif "date" in field_name.lower():
+                    # Validate date format (simplified)
+                    if isinstance(value, str):
+                        import re
+                        date_pattern = r'\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4}'
+                        if not re.match(date_pattern, value):
+                            plausibility_checks.append({
+                                "field": field_name,
+                                "issue": "INVALID_DATE_FORMAT",
+                                "value": value,
+                                "severity": "MEDIUM"
+                            })
         
         return plausibility_checks
     
-    def _check_completeness(self, fields: Dict[str, Any]) -> Dict[str, Any]:
+    def _check_completeness(self, fused_results: Dict[str, Any]) -> Dict[str, Any]:
         """Check completeness of extraction"""
-        try:
-            required_fields = ["date", "amount", "signature", "table"]
-            found_fields = []
-            
-            for field_name in fields.keys():
-                if not isinstance(field_name, str):
-                    continue
-                    
-                for required in required_fields:
-                    if required in field_name.lower():
-                        found_fields.append(required)
-            
-            missing_fields = [f for f in required_fields if f not in found_fields]
-            
-            return {
-                "total_required": len(required_fields),
-                "found": len(found_fields),
-                "missing": missing_fields,
-                "completeness_score": len(found_fields) / len(required_fields) if required_fields else 1.0
-            }
-        except Exception as e:
-            return {
-                "total_required": 4,
-                "found": 0,
-                "missing": ["date", "amount", "signature", "table"],
-                "completeness_score": 0.0,
-                "error": str(e)
-            }
+        # Check what types of information were extracted
+        extracted_types = []
+        
+        if "agent_outputs" in fused_results:
+            agents = fused_results["agent_outputs"]
+            extracted_types = list(agents.keys())
+        
+        # Define expected extraction types based on document type
+        expected_types = ["text", "vision", "entities", "semantics"]
+        
+        missing_types = [t for t in expected_types if t not in extracted_types]
+        
+        return {
+            "extracted_types": extracted_types,
+            "expected_types": expected_types,
+            "missing_types": missing_types,
+            "completeness_score": len(extracted_types) / len(expected_types) if expected_types else 1.0
+        }
     
     def detect_inconsistencies(self, state: ValidationState) -> ValidationState:
         """Detect inconsistencies in the data"""
         try:
-            logger.info(f"Detecting inconsistencies for document {state.document_id}")
+            logger.info(f"⚠️ Detecting inconsistencies for document {state.document_id}")
             
             inconsistencies = []
             
-            # Validate input
-            if 'structured_output' not in state.fused_results:
-                logger.warning("No structured_output in fused_results")
-                state.validation_results["inconsistencies"] = inconsistencies
-                return state
+            # Extract data from fused results
+            agent_outputs = state.fused_results.get("agent_outputs", {})
+            extracted_fields = state.fused_results.get("extracted_fields", {})
             
-            fields = state.fused_results['structured_output'].get('fields', {})
-            
-            # Check for contradictory information
-            for field_name, field_data in fields.items():
-                if not isinstance(field_data, dict):
-                    continue
+            # Check for contradictions between vision and text
+            if "vision" in agent_outputs and "text" in agent_outputs:
+                vision_data = agent_outputs["vision"]
+                text_data = agent_outputs["text"]
+                
+                # Check if visual elements are mentioned in text
+                if "detected_elements" in vision_data:
+                    elements = vision_data["detected_elements"]
+                    text_content = text_data.get("extracted_text", "").lower()
                     
-                if "chart" in field_name.lower():
-                    # Check if chart data contradicts text
-                    chart_inconsistency = self._check_chart_text_consistency(
-                        field_data, fields
-                    )
-                    if chart_inconsistency:
-                        inconsistencies.append(chart_inconsistency)
+                    for element in elements[:5]:  # Check first 5 elements
+                        elem_type = element.get("type", "").lower()
+                        if elem_type and elem_type not in text_content:
+                            inconsistencies.append({
+                                "type": "visual_text_mismatch",
+                                "element_type": elem_type,
+                                "description": f"{elem_type} detected visually but not mentioned in text",
+                                "severity": "low"
+                            })
             
-            # Check temporal consistency
-            temporal_issues = self._check_temporal_consistency(fields)
-            inconsistencies.extend(temporal_issues)
+            # Check extracted fields for contradictions
+            field_values = {}
+            for field_name, field_data in extracted_fields.items():
+                if isinstance(field_data, dict):
+                    field_values[field_name] = field_data.get("value")
             
-            # Check numeric consistency
-            numeric_issues = self._check_numeric_consistency(fields)
-            inconsistencies.extend(numeric_issues)
+            # Simple contradiction detection: check for duplicate fields with different values
+            for field1, value1 in field_values.items():
+                for field2, value2 in field_values.items():
+                    if field1 != field2 and field1 in field2:
+                        if value1 != value2:
+                            inconsistencies.append({
+                                "type": "field_contradiction",
+                                "fields": [field1, field2],
+                                "values": [value1, value2],
+                                "description": f"Contradiction between {field1} and {field2}",
+                                "severity": "medium"
+                            })
             
             state.validation_results["inconsistencies"] = inconsistencies
-            logger.info(f"Found {len(inconsistencies)} inconsistencies")
+            logger.info(f"✅ Found {len(inconsistencies)} inconsistencies")
             
         except Exception as e:
             error_msg = f"Inconsistency detection failed: {str(e)}"
             logger.error(error_msg)
-            logger.error(traceback.format_exc())
             state.errors.append(error_msg)
         
         return state
     
-    def _check_chart_text_consistency(self, chart_field: Dict[str, Any], 
-                                     all_fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Check if chart data contradicts text"""
-        try:
-            # Look for text fields about trends or comparisons
-            text_fields = [
-                (name, data) for name, data in all_fields.items()
-                if isinstance(data, dict) and "text" in str(data.get("source", "")).lower() 
-                and ("trend" in name.lower() or "comparison" in name.lower())
-            ]
-            
-            if text_fields:
-                # This would involve comparing chart analysis with text descriptions
-                # For now, return a placeholder check
-                return {
-                    "type": "chart_text_contradiction",
-                    "chart_field": list(chart_field.keys())[0] if chart_field else "unknown",
-                    "description": "Potential contradiction between chart data and text description",
-                    "severity": "medium"
-                }
-        except Exception as e:
-            logger.warning(f"Chart-text consistency check error: {e}")
-        
-        return None
-    
-    def _check_temporal_consistency(self, fields: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Check temporal consistency"""
-        temporal_issues = []
-        
-        try:
-            dates = []
-            
-            # Extract dates from fields
-            for field_name, field_data in fields.items():
-                if not isinstance(field_data, dict):
-                    continue
-                    
-                if "date" in field_name.lower():
-                    dates.append({
-                        "field": field_name,
-                        "value": field_data.get("value", "")
-                    })
-            
-            # Check if dates are in chronological order
-            if len(dates) > 1:
-                temporal_issues.append({
-                    "type": "multiple_dates_found",
-                    "dates": dates,
-                    "check_needed": "Chronological order verification",
-                    "severity": "low"
-                })
-        except Exception as e:
-            logger.warning(f"Temporal consistency check error: {e}")
-        
-        return temporal_issues
-    
-    def _check_numeric_consistency(self, fields: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Check numeric consistency"""
-        numeric_issues = []
-        
-        try:
-            amounts = []
-            
-            # Extract amounts from fields
-            for field_name, field_data in fields.items():
-                if not isinstance(field_data, dict):
-                    continue
-                    
-                if "amount" in field_name.lower() or "total" in field_name.lower():
-                    value = field_data.get("value", "")
-                    # Extract numbers
-                    import re
-                    numbers = re.findall(r'\d+\.?\d*', str(value))
-                    if numbers:
-                        try:
-                            amounts.append({
-                                "field": field_name,
-                                "value": float(numbers[0])
-                            })
-                        except ValueError:
-                            continue
-            
-            # Check if amounts are consistent
-            if len(amounts) > 1:
-                values = [a["value"] for a in amounts]
-                avg_value = sum(values) / len(values)
-                
-                for amount in amounts:
-                    if avg_value != 0:
-                        deviation = abs(amount["value"] - avg_value) / avg_value
-                        if deviation > 0.5:  # More than 50% deviation
-                            numeric_issues.append({
-                                "type": "amount_inconsistency",
-                                "field": amount["field"],
-                                "value": amount["value"],
-                                "average": avg_value,
-                                "deviation": f"{deviation:.1%}",
-                                "severity": "medium"
-                            })
-        except Exception as e:
-            logger.warning(f"Numeric consistency check error: {e}")
-        
-        return numeric_issues
-    
     def generate_flags(self, state: ValidationState) -> ValidationState:
         """Generate validation flags"""
         try:
-            logger.info(f"Generating flags for document {state.document_id}")
+            logger.info(f"🚩 Generating flags for document {state.document_id}")
             
             flags = []
             
             # Add flags from consistency checks
             for check in state.validation_results.get("consistency_checks", []):
-                if check.get("status") != "CONSISTENT":
+                if check["status"] != "CONSISTENT":
                     flags.append({
                         "type": "CONSISTENCY_FLAG",
                         "field": check.get("field", "unknown"),
                         "status": check["status"],
-                        "reason": check.get("details", "Unknown issue"),
+                        "reason": check["details"],
+                        "confidence": check.get("confidence", 0),
                         "priority": "HIGH" if check["status"] == "LOW_CONFIDENCE" else "MEDIUM"
                     })
             
@@ -375,48 +259,37 @@ class ValidationAgent:
                     "type": "PLAUSIBILITY_FLAG",
                     "field": check.get("field", "unknown"),
                     "status": "IMPLAUSIBLE_VALUE",
-                    "reason": f"{check.get('issue', 'Unknown')}: {check.get('value', 'N/A')} exceeds threshold {check.get('threshold', 'N/A')}",
-                    "priority": "MEDIUM"
+                    "reason": f"{check['issue']}: {check['value']}",
+                    "priority": check.get("severity", "MEDIUM").upper()
                 })
             
             # Add flags from inconsistencies
             for inconsistency in state.validation_results.get("inconsistencies", []):
                 flags.append({
                     "type": "INCONSISTENCY_FLAG",
-                    "field": inconsistency.get("chart_field", "multiple"),
+                    "fields": inconsistency.get("fields", ["multiple"]),
                     "status": "CONTRADICTION_DETECTED",
-                    "reason": inconsistency.get("description", "Unknown inconsistency"),
+                    "reason": inconsistency["description"],
                     "priority": inconsistency.get("severity", "MEDIUM").upper()
                 })
             
             # Add completeness flag if needed
             completeness = state.validation_results.get("completeness_checks", {})
-            if completeness.get("completeness_score", 1.0) < 0.7:
+            if completeness.get("completeness_score", 1.0) < 0.5:
                 flags.append({
                     "type": "COMPLETENESS_FLAG",
                     "field": "document",
                     "status": "INCOMPLETE_EXTRACTION",
-                    "reason": f"Only {completeness.get('found', 0)} of {completeness.get('total_required', 0)} required fields found",
+                    "reason": f"Only extracted {len(completeness.get('extracted_types', []))} of {len(completeness.get('expected_types', []))} expected information types",
                     "priority": "LOW"
                 })
             
-            # Ensure at least one flag if there were errors
-            if not flags and state.errors:
-                flags.append({
-                    "type": "SYSTEM_FLAG",
-                    "field": "system",
-                    "status": "PROCESSING_ERRORS",
-                    "reason": f"Found {len(state.errors)} processing errors",
-                    "priority": "HIGH"
-                })
-            
             state.flags = flags
-            logger.info(f"Generated {len(flags)} validation flags")
+            logger.info(f"✅ Generated {len(flags)} validation flags")
             
         except Exception as e:
             error_msg = f"Flag generation failed: {str(e)}"
             logger.error(error_msg)
-            logger.error(traceback.format_exc())
             state.errors.append(error_msg)
         
         return state
@@ -424,71 +297,59 @@ class ValidationAgent:
     def provide_recommendations(self, state: ValidationState) -> ValidationState:
         """Provide recommendations based on validation results"""
         try:
-            logger.info(f"Providing recommendations for document {state.document_id}")
+            logger.info(f"💡 Providing recommendations for document {state.document_id}")
             
             recommendations = []
             
             # Recommendations based on flags
-            for flag in state.flags:
-                if flag.get("priority") == "HIGH":
-                    recommendations.append(
-                        f"Manual review required for {flag.get('field', 'unknown field')}: {flag.get('reason', 'Unknown reason')}"
-                    )
-                elif flag.get("priority") == "MEDIUM":
-                    recommendations.append(
-                        f"Consider verifying {flag.get('field', 'unknown field')}: {flag.get('reason', 'Unknown reason')}"
-                    )
+            high_priority_flags = [f for f in state.flags if f.get("priority") == "HIGH"]
+            medium_priority_flags = [f for f in state.flags if f.get("priority") == "MEDIUM"]
             
-            # General recommendations
+            if high_priority_flags:
+                recommendations.append(f"⚠️ {len(high_priority_flags)} high-priority issues require immediate attention")
+                for flag in high_priority_flags[:3]:  # Show top 3
+                    recommendations.append(f"  • {flag.get('field')}: {flag.get('reason')}")
+            
+            if medium_priority_flags:
+                recommendations.append(f"ℹ️ {len(medium_priority_flags)} medium-priority issues should be reviewed")
+            
             if not state.flags:
-                recommendations.append(
-                    "Document validation passed all checks. No manual review needed."
-                )
-            elif len([f for f in state.flags if f.get("priority") == "HIGH"]) == 0:
-                recommendations.append(
-                    "Document has minor issues. Consider batch review if multiple similar documents."
-                )
-            else:
-                recommendations.append(
-                    "Document has critical issues requiring immediate manual review."
-                )
+                recommendations.append("✅ Document validation passed all checks. No manual review needed.")
             
-            # Add processing recommendations
+            # Processing recommendations
             completeness = state.validation_results.get("completeness_checks", {})
-            if completeness.get("missing"):
-                recommendations.append(
-                    f"Consider reprocessing to extract missing fields: {', '.join(completeness.get('missing', []))}"
-                )
+            missing_types = completeness.get("missing_types", [])
             
-            # Add error-related recommendations
-            if state.errors:
-                recommendations.append(
-                    f"Review processing errors: {len(state.errors)} error(s) occurred during validation"
-                )
+            if missing_types:
+                recommendations.append(f"🔧 Consider reprocessing to extract missing information types: {', '.join(missing_types)}")
+            
+            # Quality recommendations
+            consistency_checks = state.validation_results.get("consistency_checks", [])
+            low_confidence_count = len([c for c in consistency_checks if c.get("status") == "LOW_CONFIDENCE"])
+            
+            if low_confidence_count > 0:
+                recommendations.append(f"📊 {low_confidence_count} fields have low confidence scores (< 0.5). Consider manual verification.")
             
             state.recommendations = recommendations
-            logger.info(f"Generated {len(recommendations)} recommendations")
+            logger.info(f"✅ Generated {len(recommendations)} recommendations")
             
         except Exception as e:
             error_msg = f"Recommendation generation failed: {str(e)}"
             logger.error(error_msg)
-            logger.error(traceback.format_exc())
             state.errors.append(error_msg)
         
         return state
     
     async def validate_document(self, document_id: str,
                                fused_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate document through validation pipeline with guaranteed output"""
+        """Validate document through validation pipeline"""
         try:
-            # Validate inputs
-            if not document_id:
-                raise ValueError("document_id is required")
+            logger.info(f"🔬 Starting validation for document {document_id}")
             
             # Initialize state
             state = ValidationState(
                 document_id=document_id,
-                fused_results=fused_results if fused_results else {}
+                fused_results=fused_results
             )
             
             # Create and run graph
@@ -497,19 +358,6 @@ class ValidationAgent:
             
             # Execute graph
             result_state = compiled_graph.invoke(state)
-            
-            # Ensure we have some output even if validation failed
-            if not result_state.flags and not result_state.errors:
-                result_state.flags = [{
-                    "type": "NO_FLAGS",
-                    "field": "system",
-                    "status": "NO_ISSUES_DETECTED",
-                    "reason": "Validation completed but no specific issues were flagged",
-                    "priority": "LOW"
-                }]
-            
-            if not result_state.recommendations:
-                result_state.recommendations = ["No specific recommendations generated"]
             
             # Prepare response
             response = {
@@ -523,39 +371,19 @@ class ValidationAgent:
                                      "REVIEW_NEEDED" if any(f.get("priority") == "HIGH" for f in result_state.flags) 
                                      else "WARNING"
                 },
+                "validation_results": result_state.validation_results,
                 "flags": result_state.flags,
                 "recommendations": result_state.recommendations,
-                "errors": result_state.errors,
-                "validation_details": result_state.validation_results
+                "errors": result_state.errors
             }
             
-            logger.info(f"Validation completed for {document_id}: {response['validation_summary']['overall_status']}")
-            
+            logger.info(f"✅ Validation completed for {document_id}")
             return response
             
         except Exception as e:
-            logger.error(f"Validation failed: {e}")
-            logger.error(traceback.format_exc())
-            
-            # GUARANTEED RETURN EVEN ON FAILURE
+            logger.error(f"❌ Validation failed: {e}", exc_info=True)
             return {
                 "success": False,
                 "document_id": document_id,
-                "error": str(e),
-                "validation_summary": {
-                    "total_checks": 0,
-                    "flags_generated": 0,
-                    "inconsistencies_found": 0,
-                    "overall_status": "ERROR"
-                },
-                "flags": [{
-                    "type": "VALIDATION_ERROR",
-                    "field": "system",
-                    "status": "VALIDATION_FAILED",
-                    "reason": f"Validation process failed: {str(e)}",
-                    "priority": "HIGH"
-                }],
-                "recommendations": ["Investigate validation failure"],
-                "errors": [str(e)],
-                "validation_details": {}
+                "error": str(e)
             }
