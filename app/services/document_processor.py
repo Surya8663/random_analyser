@@ -400,9 +400,11 @@ class DocumentProcessor:
     
     # In document_processor.py, replace the process_document method with this FIXED version:
 
+# In document_processor.py, update the process_document method:
+
 async def process_document(self, file_path: str, document_id: str = None) -> MultiModalDocument:
     """
-    Complete document processing pipeline - FIXED VERSION
+    Complete document processing pipeline - UPDATED WITH REAL CV
     """
     try:
         logger.info(f"🚀 Processing document: {file_path}")
@@ -428,62 +430,45 @@ async def process_document(self, file_path: str, document_id: str = None) -> Mul
         # Extract text from images
         ocr_results = await self.extract_text(images)
         
-        # FIX: Properly add OCR results
+        # Add OCR results to document
         all_text_parts = []
         for page_num, ocr_result in ocr_results.items():
             doc.ocr_results[page_num] = ocr_result
             if ocr_result.text:
                 all_text_parts.append(ocr_result.text)
         
-        # Set raw text properly
+        # Set raw text
         doc.raw_text = "\n".join(all_text_parts) if all_text_parts else "No text extracted"
         
-        # Add basic layout regions (placeholder for Phase 1)
-        for idx, image in enumerate(images[:3]):  # Limit to 3 pages
-            if image is not None:
-                height, width = image.shape[:2]
-                
-                # Add a title region (placeholder)
-                doc.add_layout_region(LayoutRegion(
-                    bbox=BoundingBox(x1=50, y1=50, x2=width-50, y2=150),
-                    label="title",
-                    confidence=0.7,
-                    page_num=idx,
-                    text_content=f"Page {idx+1} Title"
-                ))
-                
-                # Add a text region (placeholder)
-                doc.add_layout_region(LayoutRegion(
-                    bbox=BoundingBox(x1=50, y1=200, x2=width-50, y2=height-100),
-                    label="paragraph",
-                    confidence=0.8,
-                    page_num=idx,
-                    text_content=f"Text content from page {idx+1}"
-                ))
+        # === NEW: REAL COMPUTER VISION PROCESSING ===
+        try:
+            from app.cv.visual_pipeline import VisualPipeline
+            visual_pipeline = VisualPipeline()
+            
+            for idx, image in enumerate(images):
+                if image is not None:
+                    logger.info(f"👁️ Running visual analysis for page {idx}")
+                    
+                    # Process page with visual pipeline
+                    layout_regions, visual_elements = visual_pipeline.process_page(image, idx)
+                    
+                    # Add to document
+                    doc.layout_regions.extend(layout_regions)
+                    doc.visual_elements.extend(visual_elements)
+                    
+                    # Store visual statistics
+                    if idx == 0:  # Only for first page for brevity
+                        stats = visual_pipeline.get_statistics(layout_regions, visual_elements)
+                        doc.processing_metadata[f"page_{idx}_visual_stats"] = stats
+                        
+            logger.info(f"✅ Computer vision completed: {len(doc.layout_regions)} layout regions, {len(doc.visual_elements)} visual elements")
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ Computer vision module not available: {e}")
+            # Keep using placeholder visual elements (Phase 1 fallback)
+            self._add_placeholder_visual_data(doc, images)
         
-        # Add basic visual elements (placeholder for Phase 1)
-        for idx, image in enumerate(images[:2]):  # Limit to 2 pages
-            if image is not None:
-                height, width = image.shape[:2]
-                
-                # Add a table element
-                doc.add_visual_element(EnhancedVisualElement(
-                    element_type="table",
-                    bbox=BoundingBox(x1=100, y1=200, x2=400, y2=400),
-                    confidence=0.75,
-                    page_num=idx,
-                    text_content="Sample table data"
-                ))
-                
-                # Add a signature on first page
-                if idx == 0:
-                    doc.add_visual_element(EnhancedVisualElement(
-                        element_type="signature",
-                        bbox=BoundingBox(x1=300, y1=500, x2=450, y2=550),
-                        confidence=0.65,
-                        page_num=idx,
-                        text_content="Signature area"
-                    ))
+        # === END NEW CV CODE ===
         
         logger.info(f"✅ Created MultiModalDocument: {doc.document_id}")
         logger.info(f"   - Pages: {len(doc.images)}")
@@ -503,6 +488,38 @@ async def process_document(self, file_path: str, document_id: str = None) -> Mul
         )
         error_doc.errors.append(f"Processing failed: {str(e)}")
         return error_doc
+
+def _add_placeholder_visual_data(self, doc: MultiModalDocument, images: List[np.ndarray]):
+    """Add placeholder visual data when CV is not available"""
+    for idx, image in enumerate(images[:3]):  # Limit to 3 pages
+        if image is not None:
+            height, width = image.shape[:2]
+            
+            # Add basic layout regions
+            doc.add_layout_region(LayoutRegion(
+                bbox=BoundingBox(x1=0.05, y1=0.05, x2=0.95, y2=0.15),
+                label="header",
+                confidence=0.7,
+                page_num=idx,
+                text_content=f"Page {idx+1} Header"
+            ))
+            
+            doc.add_layout_region(LayoutRegion(
+                bbox=BoundingBox(x1=0.05, y1=0.2, x2=0.95, y2=0.8),
+                label="text",
+                confidence=0.8,
+                page_num=idx,
+                text_content=f"Text content from page {idx+1}"
+            ))
+            
+            # Add basic visual elements
+            doc.add_visual_element(EnhancedVisualElement(
+                element_type="text_region",
+                bbox=BoundingBox(x1=0.1, y1=0.25, x2=0.9, y2=0.75),
+                confidence=0.75,
+                page_num=idx,
+                text_content="Document text area"
+            ))
 
 class MockOCREngine:
     """Mock OCR engine for when real OCR is not available"""

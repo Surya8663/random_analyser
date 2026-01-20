@@ -108,6 +108,7 @@ class SimpleWorkflow:
     
     # In orchestrator.py, replace the execute method in SimpleWorkflow with this FIXED version:
 
+# In orchestrator.py, FIX the SimpleWorkflow.execute method:
 async def execute(self, doc: MultiModalDocument) -> MultiModalDocument:
     """Execute workflow linearly with MultiModalDocument - FIXED VERSION"""
     if not self.entry_point:
