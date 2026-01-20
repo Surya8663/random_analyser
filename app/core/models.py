@@ -1,9 +1,10 @@
-# models.py - FIXED VERSION
-from pydantic import BaseModel, Field, validator
-from typing import Dict, List, Optional, Any, Union
+# app/core/models.py - COMPLETE FIXED VERSION
+from pydantic import BaseModel, Field, validator, root_validator
+from typing import Dict, List, Optional, Any, Union, Tuple
 from enum import Enum
 from datetime import datetime
 import uuid
+import numpy as np
 
 # ========== ENUMS ==========
 class DocumentType(str, Enum):
@@ -24,11 +25,10 @@ class AgentStatus(str, Enum):
     ERROR = "error"
     SKIPPED = "skipped"
 
-# ✅ FIXED: Added missing PROCESSING and ERROR values
 class ProcessingStep(str, Enum):
     UPLOAD = "upload"
     PREPROCESSING = "preprocessing"
-    PROCESSING = "processing"    # ✅ ADDED THIS
+    PROCESSING = "processing"
     VISION = "vision"
     TEXT = "text"
     FUSION = "fusion"
@@ -36,7 +36,7 @@ class ProcessingStep(str, Enum):
     RESULTS = "results"
     QUERY = "query"
     ERROR = "error"
-    COMPLETED = "completed"              # ✅ ADDED THIS
+    COMPLETED = "completed"
 
 class QualityScore(BaseModel):
     sharpness: float = Field(..., ge=0, le=1)
@@ -67,23 +67,79 @@ class QueryType(str, Enum):
     MIXED = "mixed"
     SEMANTIC = "semantic"
 
-# ========== CORE MODELS ==========
-class ExtractedField(BaseModel):
-    value: Any
-    confidence: float = Field(..., ge=0, le=1)
-    sources: List[str] = Field(default_factory=list)
-    modalities: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+# ========== MULTI-MODAL ENHANCEMENTS ==========
+
+class BoundingBox(BaseModel):
+    """Bounding box coordinates: [x1, y1, x2, y2]"""
+    x1: float
+    y1: float 
+    x2: float
+    y2: float
+    
+    def to_list(self) -> List[float]:
+        """Convert to list format for compatibility"""
+        return [self.x1, self.y1, self.x2, self.y2]
+
+class LayoutRegion(BaseModel):
+    """Layout analysis result from LayoutLM/Document AI"""
+    bbox: BoundingBox
+    label: str  # "title", "paragraph", "table", "figure", "header", "footer"
+    confidence: float
+    page_num: int
+    text_content: Optional[str] = None
     
     @validator('confidence')
-    def confidence_percentage(cls, v):
+    def validate_confidence(cls, v):
         return round(v, 4)
+
+class OCRWord(BaseModel):
+    """Single word from OCR with precise location"""
+    text: str
+    bbox: BoundingBox
+    confidence: float
+    page_num: int
+    line_num: Optional[int] = None
+    
+    @validator('confidence')
+    def validate_confidence(cls, v):
+        return round(v, 4)
+
+class OCRResult(BaseModel):
+    """Full OCR result for one page"""
+    page_num: int
+    text: str
+    words: List[OCRWord]
+    average_confidence: float
+    image_shape: Optional[Tuple[int, int]] = None  # (height, width)
+    
+    @validator('average_confidence')
+    def validate_confidence(cls, v):
+        return round(v, 4)
+
+# ========== CORE MODELS (MUST COME BEFORE ENHANCED MODELS) ==========
 
 class VisualElement(BaseModel):
     element_type: str
     bbox: List[int]
     confidence: float
     page_num: int
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    @validator('confidence')
+    def confidence_percentage(cls, v):
+        return round(v, 4)
+
+class EnhancedVisualElement(VisualElement):
+    """Enhanced version with better bounding box support"""
+    bbox: BoundingBox  # Override to use BoundingBox instead of List[int]
+    text_content: Optional[str] = None  # OCR text in this region
+    ocr_confidence: Optional[float] = None
+
+class ExtractedField(BaseModel):
+    value: Any
+    confidence: float = Field(..., ge=0, le=1)
+    sources: List[str] = Field(default_factory=list)
+    modalities: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
     @validator('confidence')
@@ -122,6 +178,8 @@ class AgentResult(BaseModel):
     
     class Config:
         use_enum_values = True
+
+# ========== MAIN PROCESSING MODELS ==========
 
 class ProcessingState(BaseModel):
     """State for LangGraph workflow"""
@@ -170,6 +228,9 @@ class ProcessingState(BaseModel):
     errors: List[str] = Field(default_factory=list)
     processing_start: datetime = Field(default_factory=datetime.now)
     processing_end: Optional[datetime] = None
+    
+    # Agent outputs
+    agent_outputs: Dict[str, Any] = Field(default_factory=dict)
     
     # ========== UI-FRIENDLY METHODS ==========
     def to_ui_summary(self) -> 'UIResultSummary':
@@ -304,7 +365,317 @@ class ProcessingState(BaseModel):
         
         return self.calculate_average_confidence(confidences) if confidences else 0.0
 
+# ========== MULTI-MODAL DOCUMENT MODEL ==========
+
+class MultiModalDocument(BaseModel):
+    """
+    UNIFIED DOCUMENT with BOTH text and visual data
+    This extends ProcessingState with better multi-modal support
+    """
+    
+    # Basic metadata (same as ProcessingState)
+    document_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    file_path: Optional[str] = None
+    file_type: Optional[str] = None
+    
+    # Document classification
+    document_type: Optional[DocumentType] = None
+    
+    # TEXT MODALITY
+    raw_text: str = ""
+    ocr_results: Dict[int, OCRResult] = Field(default_factory=dict)
+    text_chunks: List[str] = Field(default_factory=list)
+    extracted_entities: Dict[str, List[str]] = Field(default_factory=dict)
+    semantic_analysis: Dict[str, Any] = Field(default_factory=dict)
+    
+    # VISUAL MODALITY
+    images: List[Any] = Field(default_factory=list)  # Keep for compatibility
+    layout_regions: List[LayoutRegion] = Field(default_factory=list)
+    visual_elements: List[EnhancedVisualElement] = Field(default_factory=list)  # ✅ FIXED: Changed from dict to list
+    
+    # Quality scores (from your existing model)
+    quality_scores: Dict[int, QualityScore] = Field(default_factory=dict)
+    
+    # Agent results
+    chart_analysis: Dict[str, Any] = Field(default_factory=dict)
+    table_structures: Dict[str, Any] = Field(default_factory=dict)
+    signature_verification: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Fusion results
+    aligned_data: Dict[str, Any] = Field(default_factory=dict)
+    field_confidences: Dict[str, float] = Field(default_factory=dict)
+    temporal_consistency: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Validation results (from your existing model)
+    contradictions: List[Contradiction] = Field(default_factory=list)
+    risk_score: float = Field(default=0.0, ge=0, le=1)
+    compliance_issues: List[str] = Field(default_factory=list)
+    
+    # Explainability results
+    explanations: Dict[str, str] = Field(default_factory=dict)
+    review_recommendations: List[str] = Field(default_factory=list)  # ✅ ADDED
+    
+    # Agent outputs (for UI)
+    agent_outputs: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Processing metadata
+    processing_metadata: Dict[str, Any] = Field(default_factory=dict)  # ✅ ADDED
+    processing_start: datetime = Field(default_factory=datetime.now)
+    processing_end: Optional[datetime] = None
+    errors: List[str] = Field(default_factory=list)
+    
+    class Config:
+        arbitrary_types_allowed = True  # For numpy arrays
+    
+    # ========== CONVERSION METHODS ==========
+    
+    @classmethod
+    def from_processing_state(cls, state: ProcessingState) -> 'MultiModalDocument':
+        """Convert existing ProcessingState to MultiModalDocument"""
+        # Extract raw text
+        raw_text = ""
+        if hasattr(state, 'extracted_text') and state.extracted_text:
+            raw_text = state.extracted_text
+        elif hasattr(state, 'ocr_results') and state.ocr_results:
+            # Build text from OCR results
+            text_parts = []
+            for page_num, result in state.ocr_results.items():
+                if isinstance(result, dict) and 'text' in result:
+                    text_parts.append(result['text'])
+                elif isinstance(result, str):
+                    text_parts.append(result)
+            raw_text = "\n".join(text_parts)
+        
+        doc = cls(
+            document_id=state.document_id,
+            file_path=state.file_path,
+            file_type=state.file_type,
+            document_type=state.document_type,
+            raw_text=raw_text,
+            extracted_entities=state.extracted_entities if hasattr(state, 'extracted_entities') else {},
+            semantic_analysis=state.semantic_analysis if hasattr(state, 'semantic_analysis') else {},
+            quality_scores=state.quality_scores if hasattr(state, 'quality_scores') else {},
+            chart_analysis=state.chart_analysis if hasattr(state, 'chart_analysis') else {},
+            table_structures=state.table_structures if hasattr(state, 'table_structures') else {},
+            signature_verification=state.signature_verification if hasattr(state, 'signature_verification') else {},
+            aligned_data=state.aligned_data if hasattr(state, 'aligned_data') else {},
+            field_confidences=state.field_confidences if hasattr(state, 'field_confidences') else {},
+            temporal_consistency=state.temporal_consistency if hasattr(state, 'temporal_consistency') else {},
+            contradictions=state.contradictions if hasattr(state, 'contradictions') else [],
+            risk_score=state.risk_score if hasattr(state, 'risk_score') else 0.0,
+            compliance_issues=state.compliance_issues if hasattr(state, 'compliance_issues') else [],
+            explanations=state.explanations if hasattr(state, 'explanations') else {},
+            review_recommendations=state.review_recommendations if hasattr(state, 'review_recommendations') else [],
+            agent_outputs=state.agent_outputs if hasattr(state, 'agent_outputs') else {},
+            processing_metadata=state.processing_metadata if hasattr(state, 'processing_metadata') else {},
+            processing_start=state.processing_start if hasattr(state, 'processing_start') else datetime.now(),
+            processing_end=state.processing_end if hasattr(state, 'processing_end') else None,
+            errors=state.errors if hasattr(state, 'errors') else [],
+            images=state.images if hasattr(state, 'images') else []
+        )
+        
+        # ✅ FIX: Convert visual elements to new format
+        visual_elements_list = []
+        if hasattr(state, 'visual_elements') and state.visual_elements:
+            for page_num, elements in state.visual_elements.items():
+                if isinstance(elements, list):
+                    for elem in elements:
+                        if hasattr(elem, 'bbox') and isinstance(elem.bbox, list) and len(elem.bbox) == 4:
+                            enhanced_elem = EnhancedVisualElement(
+                                element_type=elem.element_type,
+                                bbox=BoundingBox(
+                                    x1=elem.bbox[0],
+                                    y1=elem.bbox[1],
+                                    x2=elem.bbox[2],
+                                    y2=elem.bbox[3]
+                                ),
+                                confidence=elem.confidence,
+                                page_num=elem.page_num,
+                                metadata=elem.metadata if hasattr(elem, 'metadata') else {}
+                            )
+                            visual_elements_list.append(enhanced_elem)
+        
+        doc.visual_elements = visual_elements_list
+        
+        # ✅ FIX: Convert OCR results
+        if hasattr(state, 'ocr_results') and state.ocr_results:
+            for page_num, result in state.ocr_results.items():
+                if isinstance(result, dict):
+                    # Create basic OCRResult from old format
+                    words = []
+                    if 'words' in result and isinstance(result['words'], list):
+                        # Convert word dicts to OCRWord objects
+                        for word_dict in result['words'][:50]:  # Limit to 50 words
+                            if isinstance(word_dict, dict) and 'bbox' in word_dict:
+                                words.append(OCRWord(
+                                    text=word_dict.get('text', ''),
+                                    bbox=BoundingBox(
+                                        x1=word_dict['bbox'][0],
+                                        y1=word_dict['bbox'][1],
+                                        x2=word_dict['bbox'][2],
+                                        y2=word_dict['bbox'][3]
+                                    ),
+                                    confidence=word_dict.get('confidence', 0.8),
+                                    page_num=page_num
+                                ))
+                    
+                    # Get text from result
+                    text = result.get('text', '')
+                    if not text and words:
+                        # Build text from words
+                        text = ' '.join([word.text for word in words])
+                    
+                    ocr_result = OCRResult(
+                        page_num=page_num,
+                        text=text,
+                        words=words,
+                        average_confidence=result.get('confidence', 0.8)
+                    )
+                    doc.ocr_results[page_num] = ocr_result
+        
+        # ✅ FIX: Restore layout regions from processing_metadata
+        if hasattr(state, 'processing_metadata') and state.processing_metadata:
+            if 'layout_regions' in state.processing_metadata:
+                layout_regions_data = state.processing_metadata['layout_regions']
+                if isinstance(layout_regions_data, list):
+                    for region_data in layout_regions_data:
+                        if isinstance(region_data, dict) and 'bbox' in region_data:
+                            doc.add_layout_region(LayoutRegion(
+                                bbox=BoundingBox(
+                                    x1=region_data['bbox'][0],
+                                    y1=region_data['bbox'][1],
+                                    x2=region_data['bbox'][2],
+                                    y2=region_data['bbox'][3]
+                                ),
+                                label=region_data.get('label', 'unknown'),
+                                confidence=region_data.get('confidence', 0.7),
+                                page_num=region_data.get('page', 0),
+                                text_content=region_data.get('text_content')
+                            ))
+        
+        return doc
+    
+    def to_processing_state(self) -> ProcessingState:
+        """Convert back to ProcessingState for compatibility"""
+        # ✅ FIX: Ensure we have all fields
+        state = ProcessingState(
+            document_id=self.document_id,
+            file_path=self.file_path,
+            file_type=self.file_type,
+            images=self.images,
+            quality_scores=self.quality_scores,
+            document_type=self.document_type,
+            extracted_text=self.raw_text,  # ✅ FIX: Use raw_text
+            extracted_entities=self.extracted_entities,
+            semantic_analysis=self.semantic_analysis,
+            chart_analysis=self.chart_analysis,
+            table_structures=self.table_structures,
+            signature_verification=self.signature_verification,
+            aligned_data=self.aligned_data,
+            field_confidences=self.field_confidences,
+            temporal_consistency=self.temporal_consistency,
+            contradictions=self.contradictions,
+            risk_score=self.risk_score,
+            compliance_issues=self.compliance_issues,
+            explanations=self.explanations,
+            review_recommendations=self.review_recommendations,
+            agent_outputs=self.agent_outputs,
+            processing_metadata=self.processing_metadata.copy() if self.processing_metadata else {},  # ✅ FIX: Copy to avoid mutation
+            processing_start=self.processing_start,
+            processing_end=self.processing_end,
+            errors=self.errors
+        )
+        
+        # ✅ FIX: Convert visual elements back
+        visual_elements_dict = {}
+        if isinstance(self.visual_elements, list):
+            for elem in self.visual_elements:
+                if hasattr(elem, 'page_num'):
+                    if elem.page_num not in visual_elements_dict:
+                        visual_elements_dict[elem.page_num] = []
+                    
+                    visual_elements_dict[elem.page_num].append(
+                        VisualElement(
+                            element_type=elem.element_type,
+                            bbox=elem.bbox.to_list(),
+                            confidence=elem.confidence,
+                            page_num=elem.page_num,
+                            metadata=elem.metadata if hasattr(elem, 'metadata') else {}
+                        )
+                    )
+        
+        state.visual_elements = visual_elements_dict
+        
+        # ✅ FIX: Convert OCR results back
+        for page_num, ocr_result in self.ocr_results.items():
+            # Convert OCRResult to old format
+            word_dicts = []
+            for word in ocr_result.words[:50]:  # Limit for compatibility
+                word_dicts.append({
+                    "text": word.text,
+                    "bbox": word.bbox.to_list(),
+                    "confidence": word.confidence
+                })
+            
+            state.ocr_results[page_num] = {
+                "text": ocr_result.text,
+                "confidence": ocr_result.average_confidence,
+                "words": word_dicts
+            }
+            state.ocr_confidence[page_num] = ocr_result.average_confidence
+        
+        # ✅ FIX: Store layout regions in processing_metadata so they're not lost
+        if self.layout_regions:
+            if 'layout_regions' not in state.processing_metadata:
+                state.processing_metadata['layout_regions'] = []
+            
+            for region in self.layout_regions:
+                state.processing_metadata['layout_regions'].append({
+                    "label": region.label,
+                    "bbox": region.bbox.to_list(),
+                    "page": region.page_num,
+                    "confidence": region.confidence,
+                    "text_content": region.text_content
+                })
+        
+        return state
+    
+    # ========== HELPER METHODS ==========
+    
+    def get_visual_elements_by_type(self, element_type: str) -> List[EnhancedVisualElement]:
+        """Get all visual elements of a specific type"""
+        return [elem for elem in self.visual_elements if elem.element_type == element_type]
+    
+    def get_layout_regions_by_label(self, label: str) -> List[LayoutRegion]:
+        """Get all layout regions with a specific label"""
+        return [region for region in self.layout_regions if region.label == label]
+    
+    def add_visual_element(self, element: EnhancedVisualElement):
+        """Add a visual element"""
+        self.visual_elements.append(element)
+    
+    def add_layout_region(self, region: LayoutRegion):
+        """Add a layout region"""
+        self.layout_regions.append(region)
+    
+    def add_ocr_result(self, page_num: int, ocr_result: OCRResult):
+        """Add OCR result for a page"""
+        self.ocr_results[page_num] = ocr_result
+        # ✅ FIX: Properly concatenate text
+        if ocr_result.text:
+            if not self.raw_text:
+                self.raw_text = ocr_result.text
+            else:
+                self.raw_text += "\n" + ocr_result.text
+    
+    def get_processing_time(self) -> float:
+        """Calculate processing time in seconds"""
+        if self.processing_end:
+            return (self.processing_end - self.processing_start).total_seconds()
+        return 0.0
+
 # ========== UI-SPECIFIC MODELS ==========
+
 class UIProcessingState(BaseModel):
     """UI-optimized processing state"""
     document_id: str
@@ -530,6 +901,7 @@ class StatusResponse(BaseModel):
     ui_state: Optional[Dict[str, Any]] = None
 
 # ========== AGENT CONFIGURATION MODELS ==========
+
 class AgentConfiguration(BaseModel):
     """Agent configuration for UI settings"""
     enabled: bool = True

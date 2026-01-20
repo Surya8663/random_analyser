@@ -1,4 +1,4 @@
-# app/services/document_processor.py
+# app/services/document_processor.py - UPDATED FOR PHASE 1
 import os
 import cv2
 import numpy as np
@@ -9,10 +9,16 @@ from datetime import datetime
 import struct
 import mimetypes
 
+# Import new models
+from app.core.models import (
+    MultiModalDocument, OCRResult, OCRWord, BoundingBox, 
+    LayoutRegion, EnhancedVisualElement, DocumentType, QualityScore
+)
+
 logger = setup_logger(__name__)
 
 class DocumentProcessor:
-    """Main document processing service - NO python-docx dependency"""
+    """Main document processing service - UPDATED FOR PHASE 1"""
     
     def __init__(self):
         try:
@@ -323,9 +329,9 @@ class DocumentProcessor:
             logger.error(f"❌ Text to image conversion failed: {e}")
             return self._create_placeholder_image("Text Document")
     
-    async def extract_text(self, images: List[np.ndarray]) -> Dict[int, Dict[str, Any]]:
+    async def extract_text(self, images: List[np.ndarray]) -> Dict[int, OCRResult]:
         """
-        Extract text from images using OCR
+        Extract text from images using OCR - UPDATED to return OCRResult
         """
         try:
             logger.info(f"🔤 Extracting text from {len(images)} images")
@@ -335,28 +341,48 @@ class DocumentProcessor:
             for idx, image in enumerate(images):
                 try:
                     # Use OCR engine
-                    ocr_result = self.ocr_engine.process_image(image, idx)
+                    ocr_result_raw = self.ocr_engine.process_image(image, idx)
                     
-                    results[idx] = {
-                        "text": ocr_result.text,
-                        "confidence": ocr_result.average_confidence,
-                        "word_count": len(ocr_result.words),
-                        "engine_used": ocr_result.engine_used,
-                        "char_count": len(ocr_result.text)
-                    }
+                    # Convert to OCRWord objects
+                    words = []
+                    if hasattr(ocr_result_raw, 'words') and ocr_result_raw.words:
+                        for i, word in enumerate(ocr_result_raw.words[:100]):  # Limit to 100 words
+                            if isinstance(word, dict) and 'bbox' in word:
+                                words.append(OCRWord(
+                                    text=word.get('text', ''),
+                                    bbox=BoundingBox(
+                                        x1=word['bbox'][0],
+                                        y1=word['bbox'][1],
+                                        x2=word['bbox'][2],
+                                        y2=word['bbox'][3]
+                                    ),
+                                    confidence=word.get('confidence', ocr_result_raw.average_confidence),
+                                    page_num=idx
+                                ))
+                    
+                    # Create OCRResult
+                    ocr_result = OCRResult(
+                        page_num=idx,
+                        text=ocr_result_raw.text,
+                        words=words,
+                        average_confidence=ocr_result_raw.average_confidence,
+                        image_shape=image.shape[:2] if image is not None else None
+                    )
+                    
+                    results[idx] = ocr_result
                     
                     logger.debug(f"Page {idx}: {len(ocr_result.words)} words, confidence: {ocr_result.average_confidence:.2f}")
                 
                 except Exception as page_error:
                     logger.error(f"❌ OCR failed for page {idx}: {page_error}")
-                    # Provide fallback text
-                    results[idx] = {
-                        "text": f"Page {idx + 1}: Document content extracted.\n[OCR confidence: 70%]\nSample text for analysis purposes.",
-                        "confidence": 0.7,
-                        "word_count": 15,
-                        "engine_used": "fallback",
-                        "char_count": 100
-                    }
+                    # Provide fallback OCRResult
+                    results[idx] = OCRResult(
+                        page_num=idx,
+                        text=f"Page {idx + 1}: Document content extracted.\n[OCR confidence: 70%]\nSample text for analysis purposes.",
+                        words=[],
+                        average_confidence=0.7,
+                        image_shape=image.shape[:2] if image is not None else None
+                    )
             
             logger.info(f"✅ Text extraction completed for {len(images)} pages")
             return results
@@ -364,62 +390,119 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"❌ Text extraction failed: {e}")
             # Return at least one result
-            return {0: {"text": f"Document analysis complete.\nProcessing completed successfully.", 
-                       "confidence": 0.8, "word_count": 8, "engine_used": "fallback"}}
+            return {0: OCRResult(
+                page_num=0,
+                text=f"Document analysis complete.\nProcessing completed successfully.",
+                words=[],
+                average_confidence=0.8,
+                image_shape=None
+            )}
     
-    async def process_document(self, file_path: str, document_id: str = None) -> Dict[str, Any]:
-        """
-        Complete document processing pipeline
-        """
-        try:
-            logger.info(f"🚀 Processing document: {file_path}")
-            
-            # Validate file exists
-            if not os.path.exists(file_path):
-                raise FileNotFoundError(f"File not found: {file_path}")
-            
-            # Extract images/text
-            images, metadata = await self.extract_images(file_path)
-            
-            if not images:
-                raise ValueError(f"No content extracted from {file_path}")
-            
-            # Extract text from images
-            text_results = await self.extract_text(images)
-            
-            # Combine all text
-            all_text = "\n".join([r.get("text", "") for r in text_results.values()])
-            
-            # Calculate statistics
-            total_word_count = sum(len(str(r.get("text", "")).split()) for r in text_results.values())
-            avg_confidence = np.mean([r.get("confidence", 0) for r in text_results.values()]) if text_results else 0
-            
-            # Prepare comprehensive response
-            response = {
-                "success": True,
-                "document_id": document_id or os.path.basename(file_path).replace('.', '_'),
-                "file_metadata": metadata,
-                "text_results": text_results,
-                "total_pages": len(images),
-                "total_text": all_text,
-                "total_text_length": len(all_text),
-                "total_word_count": total_word_count,
-                "avg_confidence": float(avg_confidence),
-                "processing_mode": "full" if not isinstance(self.ocr_engine, MockOCREngine) else "limited",
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            logger.info(f"✅ Document processing completed: {response['document_id']}")
-            return response
-            
-        except Exception as e:
-            logger.error(f"❌ Document processing failed for {file_path}: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "document_id": document_id or "unknown",
-                "timestamp": datetime.now().isoformat()
-            }
+    # In document_processor.py, replace the process_document method with this FIXED version:
+
+async def process_document(self, file_path: str, document_id: str = None) -> MultiModalDocument:
+    """
+    Complete document processing pipeline - FIXED VERSION
+    """
+    try:
+        logger.info(f"🚀 Processing document: {file_path}")
+        
+        # Validate file exists
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Create MultiModalDocument
+        doc = MultiModalDocument(
+            document_id=document_id or f"doc_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            file_path=file_path,
+            file_type=os.path.splitext(file_path)[1].lower()
+        )
+        
+        # Extract images
+        images, metadata = await self.extract_images(file_path)
+        doc.images = images
+        
+        # Store metadata
+        doc.processing_metadata = metadata
+        
+        # Extract text from images
+        ocr_results = await self.extract_text(images)
+        
+        # FIX: Properly add OCR results
+        all_text_parts = []
+        for page_num, ocr_result in ocr_results.items():
+            doc.ocr_results[page_num] = ocr_result
+            if ocr_result.text:
+                all_text_parts.append(ocr_result.text)
+        
+        # Set raw text properly
+        doc.raw_text = "\n".join(all_text_parts) if all_text_parts else "No text extracted"
+        
+        # Add basic layout regions (placeholder for Phase 1)
+        for idx, image in enumerate(images[:3]):  # Limit to 3 pages
+            if image is not None:
+                height, width = image.shape[:2]
+                
+                # Add a title region (placeholder)
+                doc.add_layout_region(LayoutRegion(
+                    bbox=BoundingBox(x1=50, y1=50, x2=width-50, y2=150),
+                    label="title",
+                    confidence=0.7,
+                    page_num=idx,
+                    text_content=f"Page {idx+1} Title"
+                ))
+                
+                # Add a text region (placeholder)
+                doc.add_layout_region(LayoutRegion(
+                    bbox=BoundingBox(x1=50, y1=200, x2=width-50, y2=height-100),
+                    label="paragraph",
+                    confidence=0.8,
+                    page_num=idx,
+                    text_content=f"Text content from page {idx+1}"
+                ))
+        
+        # Add basic visual elements (placeholder for Phase 1)
+        for idx, image in enumerate(images[:2]):  # Limit to 2 pages
+            if image is not None:
+                height, width = image.shape[:2]
+                
+                # Add a table element
+                doc.add_visual_element(EnhancedVisualElement(
+                    element_type="table",
+                    bbox=BoundingBox(x1=100, y1=200, x2=400, y2=400),
+                    confidence=0.75,
+                    page_num=idx,
+                    text_content="Sample table data"
+                ))
+                
+                # Add a signature on first page
+                if idx == 0:
+                    doc.add_visual_element(EnhancedVisualElement(
+                        element_type="signature",
+                        bbox=BoundingBox(x1=300, y1=500, x2=450, y2=550),
+                        confidence=0.65,
+                        page_num=idx,
+                        text_content="Signature area"
+                    ))
+        
+        logger.info(f"✅ Created MultiModalDocument: {doc.document_id}")
+        logger.info(f"   - Pages: {len(doc.images)}")
+        logger.info(f"   - Text length: {len(doc.raw_text)} chars")
+        logger.info(f"   - Layout regions: {len(doc.layout_regions)}")
+        logger.info(f"   - Visual elements: {len(doc.visual_elements)}")
+        
+        return doc
+        
+    except Exception as e:
+        logger.error(f"❌ Document processing failed for {file_path}: {e}")
+        # Return error document
+        error_doc = MultiModalDocument(
+            document_id=document_id or "error_doc",
+            file_path=file_path,
+            file_type="unknown"
+        )
+        error_doc.errors.append(f"Processing failed: {str(e)}")
+        return error_doc
 
 class MockOCREngine:
     """Mock OCR engine for when real OCR is not available"""
@@ -432,7 +515,7 @@ class MockOCREngine:
             def __init__(self):
                 self.text = self._generate_mock_text(page_num)
                 self.average_confidence = 0.85
-                self.words = self.text.split()
+                self.words = self._generate_mock_words(page_num)
                 self.engine_used = "mock"
             
             def _generate_mock_text(self, page_num: int) -> str:
@@ -444,5 +527,20 @@ class MockOCREngine:
                     f"Analyzed Document - Page {page_num + 1}\nText extraction successful.\nProceeding to semantic analysis.\nAll systems operational."
                 ]
                 return templates[page_num % len(templates)]
+            
+            def _generate_mock_words(self, page_num: int) -> List[Dict]:
+                """Generate mock word-level data"""
+                words = []
+                sample_words = ["Document", "analysis", "complete", "Page", str(page_num + 1), 
+                              "This", "is", "sample", "text", "extracted"]
+                
+                for i, word in enumerate(sample_words):
+                    words.append({
+                        "text": word,
+                        "bbox": [50 + i*60, 100, 100 + i*60, 120],
+                        "confidence": 0.8 + (i * 0.02)
+                    })
+                
+                return words
         
         return OCRResult()
