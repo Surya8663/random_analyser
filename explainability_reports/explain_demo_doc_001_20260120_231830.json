@@ -1,0 +1,294 @@
+{
+  "document_id": "demo_doc_001",
+  "generated_at": "2026-01-20T23:18:30.631778",
+  "processing_summary": {
+    "total_pages": 0,
+    "text_length": 258,
+    "visual_elements": 3,
+    "extracted_fields": 9,
+    "processing_time_seconds": 0.0,
+    "errors_count": 0,
+    "contradictions_count": 2
+  },
+  "field_explanations": {
+    "invoice_number": {
+      "value": "Invoice",
+      "type": "text",
+      "confidence": 0.7,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: invoice_number",
+      "source_page": null
+    },
+    "signature_present": {
+      "value": true,
+      "type": "boolean",
+      "confidence": 0.8,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 2,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: signature_present",
+      "source_page": null
+    },
+    "document_id": {
+      "value": "demo_doc_001",
+      "type": "text",
+      "confidence": 1.0,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "metadata"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "system_generated",
+      "source_modality": "metadata",
+      "reasoning": "System-generated document ID",
+      "source_page": null
+    },
+    "total_amount": {
+      "value": "$1,500.00",
+      "type": "number",
+      "confidence": 0.6,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: total_amount",
+      "source_page": null
+    },
+    "amount": {
+      "value": "$1,500.00",
+      "type": "number",
+      "confidence": 0.6,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: amount",
+      "source_page": null
+    },
+    "visual_text_block_count": {
+      "value": 1,
+      "type": "integer",
+      "confidence": 0.9,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: visual_text_block_count",
+      "source_page": null
+    },
+    "visual_table_count": {
+      "value": 1,
+      "type": "integer",
+      "confidence": 0.9,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: visual_table_count",
+      "source_page": null
+    },
+    "visual_signature_count": {
+      "value": 1,
+      "type": "signature",
+      "confidence": 0.9,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: visual_signature_count",
+      "source_page": null
+    },
+    "table_present": {
+      "value": true,
+      "type": "text",
+      "confidence": 0.7,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: table_present",
+      "source_page": null
+    }
+  },
+  "agent_contributions": {
+    "FusionAgent": {
+      "field_count": 9,
+      "modalities": [
+        "visual",
+        "metadata",
+        "text"
+      ],
+      "average_confidence": 0.7888888888888891,
+      "unique_fields": [
+        "total_amount",
+        "visual_text_block_count",
+        "invoice_number",
+        "signature_present",
+        "amount",
+        "document_id",
+        "visual_table_count",
+        "visual_signature_count",
+        "table_present"
+      ]
+    },
+    "VisionAgent": {
+      "field_count": 1,
+      "modalities": [
+        "visual"
+      ],
+      "average_confidence": 0.7,
+      "unique_fields": [
+        "signature_present"
+      ]
+    }
+  },
+  "modality_analysis": {
+    "text": {
+      "field_count": 3,
+      "average_confidence": 0.6333333333333333
+    },
+    "visual": {
+      "field_count": 6,
+      "average_confidence": 0.8166666666666668
+    },
+    "fusion": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    },
+    "metadata": {
+      "field_count": 1,
+      "average_confidence": 1.0
+    }
+  },
+  "decision_points": [
+    {
+      "field": "signature_present",
+      "decision_type": "source_selection",
+      "sources": [
+        [
+          "VisionAgent",
+          "visual",
+          0.7
+        ],
+        [
+          "FusionAgent",
+          "visual",
+          0.8
+        ]
+      ],
+      "selected_source": "FusionAgent",
+      "selection_criteria": "highest_confidence",
+      "confidence_delta": 0.10000000000000009
+    },
+    {
+      "field": "names_count vs names_unique",
+      "decision_type": "contradiction_resolution",
+      "contradiction_type": "data_type_mismatch",
+      "severity": "low",
+      "explanation": "Multiple names values found: 5 total, 5 unique",
+      "resolution": "Verify which names value is correct"
+    },
+    {
+      "field": "date_count vs date_values",
+      "decision_type": "contradiction_resolution",
+      "contradiction_type": "date_mismatch",
+      "severity": "low",
+      "explanation": "Multiple dates found in document: 2 total",
+      "resolution": "Verify which date is correct for this document"
+    }
+  ],
+  "confidence_analysis": {
+    "average": 0.788888888888889,
+    "min": 0.6,
+    "max": 1.0,
+    "std": 0.13698697784375505,
+    "distribution": {
+      "0.7-0.9": 3,
+      "0.5-0.7": 2,
+      "0.9-1.0": 3
+    }
+  },
+  "provenance_timeline": [
+    {
+      "agent": "VisionAgent",
+      "start": "2026-01-20T23:18:30.190137",
+      "end": "2026-01-20T23:18:30.190137",
+      "duration": 0.0,
+      "fields_extracted": [
+        "visual_table_0",
+        "visual_signature_1"
+      ],
+      "errors": []
+    },
+    {
+      "agent": "TextAgent",
+      "start": "2026-01-20T23:18:30.298491",
+      "end": "2026-01-20T23:18:30.300706",
+      "duration": 0.002215,
+      "fields_extracted": [
+        "dates_0",
+        "dates_1",
+        "amounts_0",
+        "amounts_1",
+        "identifiers_0",
+        "names_0",
+        "names_1",
+        "names_2",
+        "names_3",
+        "names_4"
+      ],
+      "errors": []
+    },
+    {
+      "agent": "FusionAgent",
+      "start": "2026-01-20T23:18:30.408449",
+      "end": "2026-01-20T23:18:30.408449",
+      "duration": 0.0,
+      "fields_extracted": [],
+      "errors": []
+    }
+  ],
+  "cross_modality_insights": {
+    "modality_distribution": {
+      "visual": 7,
+      "text": 13,
+      "metadata": 1
+    },
+    "agent_modality_distribution": {
+      "VisionAgent_visual": 2,
+      "TextAgent_text": 10,
+      "FusionAgent_metadata": 1,
+      "FusionAgent_text": 3,
+      "FusionAgent_visual": 5
+    },
+    "fields_with_multiple_modalities": 0
+  }
+}

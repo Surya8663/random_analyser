@@ -1,0 +1,238 @@
+{
+  "document_id": "test_001",
+  "generated_at": "2026-01-20T23:18:26.163021",
+  "processing_summary": {
+    "total_pages": 1,
+    "text_length": 78,
+    "visual_elements": 2,
+    "extracted_fields": 8,
+    "processing_time_seconds": 0.0,
+    "errors_count": 0,
+    "contradictions_count": 1
+  },
+  "field_explanations": {
+    "document_id": {
+      "value": "test_001",
+      "type": "text",
+      "confidence": 1.0,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "metadata"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "system_generated",
+      "source_modality": "metadata",
+      "reasoning": "System-generated document ID",
+      "source_page": null
+    },
+    "invoice_number": {
+      "value": "Invoice",
+      "type": "text",
+      "confidence": 0.7,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: invoice_number",
+      "source_page": null
+    },
+    "date": {
+      "value": "2024-03-20",
+      "type": "date",
+      "confidence": 0.8,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: date",
+      "source_page": null
+    },
+    "total_amount": {
+      "value": "$1,500.00",
+      "type": "number",
+      "confidence": 0.6,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: total_amount",
+      "source_page": null
+    },
+    "amount": {
+      "value": "$1,500.00",
+      "type": "number",
+      "confidence": 0.6,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "ocr_pattern",
+      "source_modality": "text",
+      "reasoning": "Extracted from OCR text using pattern: amount",
+      "source_page": null
+    },
+    "visual_text_block_count": {
+      "value": 1,
+      "type": "integer",
+      "confidence": 0.9,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: visual_text_block_count",
+      "source_page": null
+    },
+    "visual_table_count": {
+      "value": 1,
+      "type": "integer",
+      "confidence": 0.9,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: visual_table_count",
+      "source_page": null
+    },
+    "table_present": {
+      "value": true,
+      "type": "text",
+      "confidence": 0.7,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: table_present",
+      "source_page": null
+    }
+  },
+  "agent_contributions": {
+    "FusionAgent": {
+      "field_count": 8,
+      "modalities": [
+        "metadata",
+        "text",
+        "visual"
+      ],
+      "average_confidence": 0.7750000000000001,
+      "unique_fields": [
+        "visual_text_block_count",
+        "total_amount",
+        "visual_table_count",
+        "document_id",
+        "invoice_number",
+        "table_present",
+        "date",
+        "amount"
+      ]
+    }
+  },
+  "modality_analysis": {
+    "text": {
+      "field_count": 4,
+      "average_confidence": 0.675
+    },
+    "visual": {
+      "field_count": 3,
+      "average_confidence": 0.8333333333333334
+    },
+    "fusion": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    },
+    "metadata": {
+      "field_count": 1,
+      "average_confidence": 1.0
+    }
+  },
+  "decision_points": [
+    {
+      "field": "date_count vs date_values",
+      "decision_type": "contradiction_resolution",
+      "contradiction_type": "date_mismatch",
+      "severity": "low",
+      "explanation": "Multiple dates found in document: 2 total",
+      "resolution": "Verify which date is correct for this document"
+    }
+  ],
+  "confidence_analysis": {
+    "average": 0.7749999999999999,
+    "min": 0.6,
+    "max": 1.0,
+    "std": 0.13919410907075055,
+    "distribution": {
+      "0.7-0.9": 3,
+      "0.5-0.7": 2,
+      "0.9-1.0": 2
+    }
+  },
+  "provenance_timeline": [
+    {
+      "agent": "VisionAgent",
+      "start": "2026-01-20T23:18:25.716916",
+      "end": "2026-01-20T23:18:25.716916",
+      "duration": 0.0,
+      "fields_extracted": [
+        "visual_table_0"
+      ],
+      "errors": []
+    },
+    {
+      "agent": "TextAgent",
+      "start": "2026-01-20T23:18:25.830589",
+      "end": "2026-01-20T23:18:25.833122",
+      "duration": 0.002533,
+      "fields_extracted": [
+        "dates_0",
+        "dates_1",
+        "amounts_0",
+        "identifiers_0",
+        "names_0",
+        "names_1",
+        "names_2"
+      ],
+      "errors": []
+    },
+    {
+      "agent": "FusionAgent",
+      "start": "2026-01-20T23:18:25.943269",
+      "end": "2026-01-20T23:18:25.945377",
+      "duration": 0.002108,
+      "fields_extracted": [],
+      "errors": []
+    }
+  ],
+  "cross_modality_insights": {
+    "modality_distribution": {
+      "visual": 4,
+      "text": 11,
+      "metadata": 1
+    },
+    "agent_modality_distribution": {
+      "VisionAgent_visual": 1,
+      "TextAgent_text": 7,
+      "FusionAgent_metadata": 1,
+      "FusionAgent_text": 4,
+      "FusionAgent_visual": 3
+    },
+    "fields_with_multiple_modalities": 0
+  }
+}

@@ -11,6 +11,7 @@ class VisionAgent(BaseAgent):
     """Real Vision Agent for semantic analysis of visual elements"""
     
     def __init__(self):
+        super().__init__()
         self._accepts_multi_modal = True
     
     async def process(self, document: MultiModalDocument) -> MultiModalDocument:
@@ -18,14 +19,38 @@ class VisionAgent(BaseAgent):
         try:
             logger.info("🔍 Running Vision Agent (Semantic Analysis)")
             
+            # Record agent start
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_start(self.get_name())
+            
+            fields_extracted = []
+            
             # Analyze each visual element semantically
             for element in document.visual_elements:
                 # Ensure metadata exists
                 if not hasattr(element, 'metadata') or element.metadata is None:
                     element.metadata = {}
                 
-                element.metadata["semantic_label"] = self._classify_element_semantically(element)
-                element.metadata["importance_score"] = self._calculate_importance_score(element)
+                # Classify element
+                semantic_label = self._classify_element_semantically(element)
+                importance_score = self._calculate_importance_score(element)
+                
+                element.metadata["semantic_label"] = semantic_label
+                element.metadata["importance_score"] = importance_score
+                
+                # Record provenance for visual element classification
+                if element.element_type in ["signature", "table", "logo"]:
+                    field_name = f"visual_{element.element_type}_{len(fields_extracted)}"
+                    self._record_provenance(
+                        field_name=field_name,
+                        extraction_method="semantic_classification",
+                        source_modality="visual",
+                        confidence=element.confidence * importance_score,
+                        source_bbox=element.bbox,
+                        source_page=element.page_num,
+                        reasoning_notes=f"Classified as {semantic_label} with importance {importance_score:.2f}"
+                    )
+                    fields_extracted.append(field_name)
             
             # Analyze layout regions
             for region in document.layout_regions:
@@ -41,17 +66,30 @@ class VisionAgent(BaseAgent):
                 document.processing_metadata = {}
             document.processing_metadata["vision_analysis"] = visual_stats
             
+            # Record agent end
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_end(
+                    agent_name=self.get_name(),
+                    fields_extracted=fields_extracted
+                )
+            
             logger.info(f"✅ Vision analysis completed: {len(document.visual_elements)} elements classified")
             return document
             
         except Exception as e:
             logger.error(f"❌ Vision analysis failed: {e}")
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_end(
+                    agent_name=self.get_name(),
+                    fields_extracted=[],
+                    errors=[str(e)]
+                )
+            
             if not hasattr(document, 'errors'):
                 document.errors = []
             document.errors.append(f"Vision agent error: {str(e)}")
             return document
     
-    # ... rest of the methods remain the same ...
     def _classify_element_semantically(self, element: EnhancedVisualElement) -> str:
         """Classify visual element based on type, position, and context"""
         element_type = element.element_type

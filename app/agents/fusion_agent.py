@@ -1,5 +1,5 @@
-# app/agents/fusion_agent.py - COMPLETELY CORRECTED, NO MOCK
-from typing import Dict, Any, List, Tuple
+# app/agents/fusion_agent.py - CORRECTED
+from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 from app.agents.base_agent import BaseAgent
 from app.core.models import MultiModalDocument, EnhancedVisualElement, LayoutRegion, OCRResult, OCRWord, BoundingBox
@@ -11,12 +11,19 @@ class FusionAgent(BaseAgent):
     """Real Fusion Agent for cross-modal alignment and integration - NO MOCK"""
     
     def __init__(self):
+        super().__init__()
         self._accepts_multi_modal = True
     
     async def process(self, document: MultiModalDocument) -> MultiModalDocument:
         """Fuse visual and text information into coherent understanding - REAL IMPLEMENTATION"""
         try:
             logger.info("🔄 Running Fusion Agent (Cross-Modal Alignment)")
+            
+            # Record agent start
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_start(self.get_name())
+            
+            fields_extracted = []
             
             # Step 1: Align text with visual regions - REAL ALGORITHM
             text_visual_alignment = self._real_align_text_with_visual_regions(document)
@@ -34,14 +41,25 @@ class FusionAgent(BaseAgent):
                 "fusion_confidence": consistency_metrics.get("overall_consistency", 0.5)
             }
             
-            # Add extracted fields to document
-            document.extracted_fields = extracted_fields
+            # Record agent end
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_end(
+                    agent_name=self.get_name(),
+                    fields_extracted=fields_extracted
+                )
             
             logger.info(f"✅ Fusion completed: {len(text_visual_alignment)} alignments, {len(extracted_fields)} fields")
             return document
             
         except Exception as e:
             logger.error(f"❌ Fusion failed: {e}")
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_end(
+                    agent_name=self.get_name(),
+                    fields_extracted=[],
+                    errors=[str(e)]
+                )
+            
             document.errors.append(f"Fusion agent error: {str(e)}")
             return document
     
@@ -111,27 +129,91 @@ class FusionAgent(BaseAgent):
         fields = {}
         
         # Field 1: Document metadata
-        fields["document_id"] = {
-            "value": document.document_id,
-            "confidence": 1.0,
-            "source": "system",
-            "modalities": ["metadata"]
-        }
+        metadata_provenance = self._record_provenance(
+            field_name="document_id",
+            extraction_method="system_generated",
+            source_modality="metadata",
+            confidence=1.0,
+            reasoning_notes="System-generated document ID"
+        )
         
-        # Field 2: Extract from OCR text patterns
+        if metadata_provenance:
+            document.add_field_with_provenance(
+                field_name="document_id",
+                field_type="text",
+                value=document.document_id,
+                confidence=1.0,
+                provenance=metadata_provenance,
+                modality_sources=["metadata"]
+            )
+            fields["document_id"] = document.extracted_fields["document_id"].dict()
+        
+        # Extract from OCR
         ocr_fields = self._extract_fields_from_ocr(document)
-        fields.update(ocr_fields)
+        for field_name, field_data in ocr_fields.items():
+            provenance = self._record_provenance(
+                field_name=field_name,
+                extraction_method="ocr_pattern",
+                source_modality="text",
+                confidence=field_data.get("confidence", 0.5),
+                reasoning_notes=f"Extracted from OCR text using pattern: {field_name}"
+            )
+            
+            if provenance:
+                document.add_field_with_provenance(
+                    field_name=field_name,
+                    field_type=self._infer_field_type(field_name),
+                    value=field_data.get("value"),
+                    confidence=field_data.get("confidence", 0.5),
+                    provenance=provenance,
+                    modality_sources=["text"]
+                )
+                fields[field_name] = document.extracted_fields[field_name].dict()
         
-        # Field 3: Extract from visual elements
+        # Extract from visual
         visual_fields = self._extract_fields_from_visual(document)
-        fields.update(visual_fields)
-        
-        # Field 4: Extract from entities if available
-        if hasattr(document, 'extracted_entities') and document.extracted_entities:
-            entity_fields = self._extract_fields_from_entities(document)
-            fields.update(entity_fields)
+        for field_name, field_data in visual_fields.items():
+            provenance = self._record_provenance(
+                field_name=field_name,
+                extraction_method="visual_detection",
+                source_modality="visual",
+                confidence=field_data.get("confidence", 0.5),
+                reasoning_notes=f"Detected from visual analysis: {field_name}"
+            )
+            
+            if provenance:
+                if field_name in document.extracted_fields:
+                    document.merge_field_provenance(
+                        field_name=field_name,
+                        new_provenance=provenance,
+                        new_value=field_data.get("value"),
+                        new_confidence=field_data.get("confidence", 0.5)
+                    )
+                else:
+                    document.add_field_with_provenance(
+                        field_name=field_name,
+                        field_type=self._infer_field_type(field_name),
+                        value=field_data.get("value"),
+                        confidence=field_data.get("confidence", 0.5),
+                        provenance=provenance,
+                        modality_sources=["visual"]
+                    )
+                fields[field_name] = document.extracted_fields[field_name].dict()
         
         return fields
+    
+    def _infer_field_type(self, field_name: str) -> str:
+        """Infer field type from field name"""
+        if "date" in field_name.lower():
+            return "date"
+        elif any(word in field_name.lower() for word in ["amount", "total", "price", "cost"]):
+            return "number"
+        elif "signature" in field_name.lower():
+            return "signature"
+        elif any(word in field_name.lower() for word in ["count", "number_of"]):
+            return "integer"
+        else:
+            return "text"
     
     def _extract_fields_from_ocr(self, document: MultiModalDocument) -> Dict[str, Dict[str, Any]]:
         """Extract fields from OCR text using pattern matching"""

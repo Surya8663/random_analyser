@@ -1,22 +1,25 @@
-# app/agents/orchestrator.py - COMPLETE VERSION
+# app/agents/orchestrator.py - CORRECTED
 from typing import Dict, Any
 from datetime import datetime
 import asyncio
 from app.core.models import MultiModalDocument
+from app.eval.evaluator import DocumentEvaluator
+from app.explain.explainability import ExplainabilityGenerator
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 class Phase3Orchestrator:
-    """Phase 3 Orchestrator for competition-grade document intelligence"""
+    """Phase 3 Orchestrator with explainability and evaluation"""
     
     def __init__(self):
-        # We'll import agents lazily to avoid circular imports
         self.vision_agent = None
         self.text_agent = None
         self.fusion_agent = None
         self.reasoning_agent = None
-        logger.info("✅ Phase 3 Orchestrator initialized")
+        self.explainability_generator = ExplainabilityGenerator()
+        self.evaluator = DocumentEvaluator()
+        logger.info("✅ Phase 3 Orchestrator with explainability initialized")
     
     def _get_vision_agent(self):
         if self.vision_agent is None:
@@ -43,9 +46,15 @@ class Phase3Orchestrator:
         return self.reasoning_agent
     
     async def process(self, document: MultiModalDocument) -> MultiModalDocument:
-        """Process document through all agents"""
+        """Process document through all agents with explainability"""
         try:
             logger.info(f"🚀 Starting Phase 3 workflow for document {document.document_id}")
+            
+            # Attach explainability tracking
+            self.explainability_generator.attach_to_document(document)
+            
+            # Get provenance tracker
+            provenance_tracker = self.explainability_generator.provenance_tracker
             
             current = document
             
@@ -59,6 +68,10 @@ class Phase3Orchestrator:
             
             for name, agent in agents:
                 try:
+                    # Set provenance tracker for agent
+                    if hasattr(agent, 'set_provenance_tracker'):
+                        agent.set_provenance_tracker(provenance_tracker)
+                    
                     logger.info(f"▶️ Executing {name} agent...")
                     current = await agent.process(current)
                     logger.info(f"✅ {name} agent completed successfully")
@@ -67,25 +80,33 @@ class Phase3Orchestrator:
                     if not hasattr(current, 'errors'):
                         current.errors = []
                     current.errors.append(f"{name} agent error: {str(e)}")
-                    # Continue with next agent even if this one failed
+                    # Record agent failure in provenance
+                    if provenance_tracker:
+                        provenance_tracker.record_agent_end(
+                            agent_name=name,
+                            fields_extracted=[],
+                            errors=[str(e)]
+                        )
                 
                 # Small delay to prevent overwhelming system
                 await asyncio.sleep(0.1)
             
+            # Generate explainability report
+            explainability_report = self.explainability_generator.generate_explainability_report(current)
+            current.processing_metadata["explainability_report"] = explainability_report
+            
+            # Generate evaluation report
+            evaluation_report = await self.evaluator.evaluate_document(current)
+            current.evaluation_report = evaluation_report
+            
             # Final processing timestamp
             current.processing_end = datetime.now()
-            
-            # Ensure document has all required fields even if agents failed
-            if not hasattr(current, 'risk_score'):
-                current.risk_score = 0.5
-            if not hasattr(current, 'contradictions'):
-                current.contradictions = []
-            if not hasattr(current, 'review_recommendations'):
-                current.review_recommendations = ["⚠️ Some agents failed - manual review recommended"]
             
             logger.info(f"✅ Phase 3 workflow completed for {document.document_id}")
             logger.info(f"   Processing time: {current.get_processing_time():.2f} seconds")
             logger.info(f"   Errors: {len(current.errors)}")
+            if explainability_report and 'field_explanations' in explainability_report:
+                logger.info(f"   Explainability report generated: {len(explainability_report.get('field_explanations', {}))} fields explained")
             
             return current
             
@@ -105,7 +126,7 @@ class Phase3Orchestrator:
             return document
     
     async def process_document(self, document: MultiModalDocument) -> Dict[str, Any]:
-        """Process document and return structured results - ADD THIS METHOD"""
+        """Process document and return structured results with explainability"""
         try:
             # Execute workflow
             result_doc = await self.process(document)
@@ -143,7 +164,15 @@ class Phase3Orchestrator:
                             "signatures": sum(1 for e in result_doc.visual_elements if e.element_type == "signature")
                         } if hasattr(result_doc, 'visual_elements') else {}
                     },
-                    "extracted_information": result_doc.extracted_fields if hasattr(result_doc, 'extracted_fields') else {},
+                    "extracted_information": {
+                        field_name: {
+                            "value": field.value,
+                            "type": field.field_type,
+                            "confidence": field.confidence,
+                            "sources": field.modality_sources
+                        }
+                        for field_name, field in result_doc.extracted_fields.items()
+                    } if hasattr(result_doc, 'extracted_fields') else {},
                     "quality_assessment": {
                         "risk_score": result_doc.risk_score,
                         "risk_level": "HIGH" if result_doc.risk_score > 0.7 else 
@@ -156,7 +185,9 @@ class Phase3Orchestrator:
                             }
                             for c in result_doc.contradictions
                         ]
-                    } if hasattr(result_doc, 'contradictions') else {}
+                    } if hasattr(result_doc, 'contradictions') else {},
+                    "explainability": result_doc.processing_metadata.get("explainability_report", {}),
+                    "evaluation": result_doc.evaluation_report.dict() if hasattr(result_doc, 'evaluation_report') and result_doc.evaluation_report else None
                 }
             
             return response

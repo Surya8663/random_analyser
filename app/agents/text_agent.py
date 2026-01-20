@@ -1,4 +1,4 @@
-# app/agents/text_agent.py - CORRECTED REAL IMPLEMENTATION
+# app/agents/text_agent.py - CORRECTED
 from typing import Dict, Any, List, Tuple
 import re
 from datetime import datetime
@@ -12,6 +12,7 @@ class TextAgent(BaseAgent):
     """Real Text Agent for OCR analysis and text understanding"""
     
     def __init__(self):
+        super().__init__()
         self._accepts_multi_modal = True
         
         # Precompiled regex patterns for entity extraction
@@ -43,6 +44,12 @@ class TextAgent(BaseAgent):
         try:
             logger.info("📝 Running Text Agent (Entity Extraction)")
             
+            # Record agent start
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_start(self.get_name())
+            
+            fields_extracted = []
+            
             if not document.ocr_results:
                 logger.warning("No OCR results found for text analysis")
                 return document
@@ -54,6 +61,36 @@ class TextAgent(BaseAgent):
             # Step 2: Extract entities from text
             entities = self._extract_entities_from_ocr(document.ocr_results)
             document.extracted_entities = entities
+            
+            # Record provenance for extracted entities
+            for entity_type, entity_list in entities.items():
+                if entity_list:
+                    for i, entity in enumerate(entity_list[:5]):  # Limit to first 5
+                        field_name = f"{entity_type}_{i}"
+                        
+                        # Find source bbox for this entity
+                        source_bbox = None
+                        source_page = 0
+                        
+                        # Try to find the word in OCR results
+                        if document.ocr_results:
+                            for page_num, ocr_result in document.ocr_results.items():
+                                for word in ocr_result.words:
+                                    if isinstance(entity, str) and entity.lower() in word.text.lower():
+                                        source_bbox = word.bbox
+                                        source_page = page_num
+                                        break
+                        
+                        self._record_provenance(
+                            field_name=field_name,
+                            extraction_method="regex_pattern",
+                            source_modality="text",
+                            confidence=0.7,  # Base confidence for regex extraction
+                            source_bbox=source_bbox,
+                            source_page=source_page,
+                            reasoning_notes=f"Extracted {entity_type} using pattern matching"
+                        )
+                        fields_extracted.append(field_name)
             
             # Step 3: Segment text by semantic blocks
             text_segments = self._segment_text_by_content(document.ocr_results)
@@ -67,11 +104,25 @@ class TextAgent(BaseAgent):
             sections = self._identify_document_sections(document.ocr_results)
             document.processing_metadata["document_sections"] = sections
             
+            # Record agent end
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_end(
+                    agent_name=self.get_name(),
+                    fields_extracted=fields_extracted
+                )
+            
             logger.info(f"✅ Text analysis completed: {sum(len(v) for v in entities.values())} entities extracted")
             return document
             
         except Exception as e:
             logger.error(f"❌ Text analysis failed: {e}")
+            if self._provenance_tracker:
+                self._provenance_tracker.record_agent_end(
+                    agent_name=self.get_name(),
+                    fields_extracted=[],
+                    errors=[str(e)]
+                )
+            
             document.errors.append(f"Text agent error: {str(e)}")
             return document
     
@@ -191,7 +242,6 @@ class TextAgent(BaseAgent):
         
         return paragraphs
     
-    # app/agents/text_agent.py - UPDATE the entity extraction method
     def _extract_entities_from_ocr(self, ocr_results: Dict[int, OCRResult]) -> Dict[str, List[str]]:
         """Extract structured entities from OCR text - SIMPLIFIED REAL VERSION"""
         entities = {

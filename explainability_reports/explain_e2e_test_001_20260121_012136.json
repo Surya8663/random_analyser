@@ -1,0 +1,71 @@
+{
+  "document_id": "e2e_test_001",
+  "generated_at": "2026-01-21T01:21:36.441136",
+  "processing_summary": {
+    "total_pages": 0,
+    "text_length": 0,
+    "visual_elements": 0,
+    "extracted_fields": 1,
+    "processing_time_seconds": 0.0,
+    "errors_count": 0,
+    "contradictions_count": 0
+  },
+  "field_explanations": {
+    "test_field": {
+      "value": "test_value_123",
+      "type": "text",
+      "confidence": 0.95,
+      "final_source": "TestAgent",
+      "modality_sources": [
+        "text"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "test_method",
+      "source_modality": "text",
+      "reasoning": "Test extraction for E2E test",
+      "source_page": 0
+    }
+  },
+  "agent_contributions": {
+    "TestAgent": {
+      "field_count": 1,
+      "modalities": [
+        "text"
+      ],
+      "average_confidence": 0.95,
+      "unique_fields": [
+        "test_field"
+      ]
+    }
+  },
+  "modality_analysis": {
+    "text": {
+      "field_count": 1,
+      "average_confidence": 0.95
+    },
+    "visual": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    },
+    "fusion": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    },
+    "metadata": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    }
+  },
+  "decision_points": [],
+  "confidence_analysis": {
+    "average": 0.95,
+    "min": 0.95,
+    "max": 0.95,
+    "std": 0.0,
+    "distribution": {
+      "0.9-1.0": 1
+    }
+  },
+  "provenance_timeline": [],
+  "cross_modality_insights": {}
+}

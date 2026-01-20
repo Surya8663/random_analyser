@@ -1,5 +1,6 @@
 # app/main.py
 from fastapi import FastAPI, HTTPException
+from app.core.models import MultiModalDocument
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn

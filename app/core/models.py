@@ -314,7 +314,106 @@ class ProcessingState(BaseModel):
         if self.processing_end:
             return (self.processing_end - self.processing_start).total_seconds()
         return 0.0
+class ProvenanceRecord(BaseModel):
+    """Record of how a field was extracted"""
+    agent_name: str
+    extraction_method: str
+    source_modality: str  # "text", "visual", "fusion", "metadata"
+    source_region_id: Optional[str] = None
+    source_bbox: Optional[BoundingBox] = None
+    source_page: Optional[int] = None
+    confidence: float = Field(..., ge=0, le=1)
+    timestamp: datetime = Field(default_factory=datetime.now)
+    reasoning_notes: Optional[str] = None
+    
+    @validator('confidence')
+    def validate_confidence(cls, v):
+        return round(v, 4)
 
+class ExplainableField(BaseModel):
+    """Field with full provenance tracking"""
+    field_name: str
+    field_type: str  # "text", "number", "date", "boolean", "signature"
+    value: Any
+    confidence: float = Field(..., ge=0, le=1)
+    provenance: List[ProvenanceRecord] = Field(default_factory=list)
+    modality_sources: List[str] = Field(default_factory=list)  # ["text", "visual", "fusion"]
+    final_source: str  # Which provenance record was selected as final
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    @validator('confidence')
+    def validate_confidence(cls, v):
+        return round(v, 4)
+    
+    def get_primary_provenance(self) -> Optional[ProvenanceRecord]:
+        """Get the provenance record that was used as final source"""
+        for record in self.provenance:
+            if record.agent_name == self.final_source:
+                return record
+        return self.provenance[0] if self.provenance else None
+
+# ========== PHASE 4: EVALUATION SCHEMAS ==========
+
+class GroundTruthField(BaseModel):
+    """Ground truth for evaluation (if available)"""
+    field_name: str
+    true_value: Any
+    value_type: str
+    importance_weight: float = Field(default=1.0, ge=0, le=2)
+
+class EvaluationMetrics(BaseModel):
+    """Comprehensive evaluation metrics"""
+    # Field-level metrics
+    field_precision: float = Field(..., ge=0, le=1)
+    field_recall: float = Field(..., ge=0, le=1)
+    field_f1: float = Field(..., ge=0, le=1)
+    field_coverage: float = Field(..., ge=0, le=1)
+    
+    # Entity extraction metrics
+    entity_precision: float = Field(..., ge=0, le=1)
+    entity_recall: float = Field(..., ge=0, le=1)
+    entity_f1: float = Field(..., ge=0, le=1)
+    
+    # Alignment metrics
+    alignment_accuracy: float = Field(..., ge=0, le=1)
+    cross_modal_consistency: float = Field(..., ge=0, le=1)
+    
+    # Risk detection metrics
+    risk_detection_precision: float = Field(..., ge=0, le=1)
+    risk_detection_recall: float = Field(..., ge=0, le=1)
+    
+    # Overall metrics
+    overall_accuracy: float = Field(..., ge=0, le=1)
+    processing_success_rate: float = Field(..., ge=0, le=1)
+    average_confidence: float = Field(..., ge=0, le=1)
+    
+    # Performance metrics
+    processing_time_seconds: float
+    agents_success_rate: Dict[str, float] = Field(default_factory=dict)
+    
+    # Field-level breakdown
+    field_metrics: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class EvaluationReport(BaseModel):
+    """Complete evaluation report for a document"""
+    document_id: str
+    evaluation_timestamp: datetime = Field(default_factory=datetime.now)
+    has_ground_truth: bool = False
+    metrics: EvaluationMetrics
+    field_comparisons: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    successful_agents: List[str] = Field(default_factory=list)
+    failed_agents: List[str] = Field(default_factory=list)
+    recommendations: List[str] = Field(default_factory=list)
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 # ========== MULTI-MODAL DOCUMENT MODEL ==========
 
 # In your models.py, update the MultiModalDocument class:
@@ -355,7 +454,7 @@ class MultiModalDocument(BaseModel):
     temporal_consistency: Dict[str, Any] = Field(default_factory=dict)
     
     # ADD THESE MISSING FIELDS:
-    extracted_fields: Dict[str, Any] = Field(default_factory=dict)  # ADD THIS LINE
+    extracted_fields: Dict[str, ExplainableField] = Field(default_factory=dict)  # ADD THIS LINE
     contradictions: List[Contradiction] = Field(default_factory=list)  # ADD THIS LINE if missing
     risk_score: float = Field(default=0.0, ge=0, le=1)  # ADD THIS LINE if missing
     compliance_issues: List[str] = Field(default_factory=list)  # ADD THIS LINE if missing
@@ -373,6 +472,11 @@ class MultiModalDocument(BaseModel):
     processing_end: Optional[datetime] = None
     errors: List[str] = Field(default_factory=list)
     
+    ground_truth: Optional[Dict[str, GroundTruthField]] = None
+    evaluation_report: Optional[EvaluationReport] = None
+    provenance_graph: Dict[str, List[ProvenanceRecord]] = Field(default_factory=dict)
+    agent_trace: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
     class Config:
         arbitrary_types_allowed = True
     
@@ -456,6 +560,53 @@ class MultiModalDocument(BaseModel):
         
         return doc
     
+    def add_field_with_provenance(self, 
+                                 field_name: str, 
+                                 field_type: str,
+                                 value: Any, 
+                                 confidence: float,
+                                 provenance: ProvenanceRecord,
+                                 modality_sources: List[str]):
+        """Add a field with full provenance tracking"""
+        explainable_field = ExplainableField(
+            field_name=field_name,
+            field_type=field_type,
+            value=value,
+            confidence=confidence,
+            provenance=[provenance],
+            modality_sources=modality_sources,
+            final_source=provenance.agent_name,
+            metadata={}
+        )
+        self.extracted_fields[field_name] = explainable_field
+        
+        # Store in provenance graph
+        if field_name not in self.provenance_graph:
+            self.provenance_graph[field_name] = []
+        self.provenance_graph[field_name].append(provenance)
+    
+    def merge_field_provenance(self, 
+                              field_name: str, 
+                              new_provenance: ProvenanceRecord,
+                              new_value: Any = None,
+                              new_confidence: float = None):
+        """Merge new provenance into existing field"""
+        if field_name in self.extracted_fields:
+            field = self.extracted_fields[field_name]
+            field.provenance.append(new_provenance)
+            
+            # Update if new provenance has higher confidence
+            if new_confidence and new_confidence > field.confidence:
+                field.value = new_value if new_value is not None else field.value
+                field.confidence = new_confidence
+                field.final_source = new_provenance.agent_name
+            
+            # Update modality sources
+            if new_provenance.source_modality not in field.modality_sources:
+                field.modality_sources.append(new_provenance.source_modality)
+    
+
+
     def to_processing_state(self) -> ProcessingState:
         """Convert back to ProcessingState for compatibility"""
         state = ProcessingState(
