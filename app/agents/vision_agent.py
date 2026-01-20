@@ -1,160 +1,194 @@
-# app/agents/vision_agent.py - UPDATED FOR MULTIMODALDOCUMENT
+# app/agents/vision_agent.py - CORRECTED
 from typing import Dict, Any, List
-from app.core.models import MultiModalDocument
+from app.agents.base_agent import BaseAgent
+from app.core.models import MultiModalDocument, EnhancedVisualElement, LayoutRegion
 from app.utils.logger import setup_logger
+import numpy as np
 
 logger = setup_logger(__name__)
 
-class VisionAgent:
-    """Vision Agent for analyzing visual elements - UPDATED for MultiModalDocument"""
+class VisionAgent(BaseAgent):
+    """Real Vision Agent for semantic analysis of visual elements"""
     
     def __init__(self):
-        # Mark that this agent accepts MultiModalDocument
         self._accepts_multi_modal = True
     
-    async def __call__(self, doc: MultiModalDocument) -> MultiModalDocument:
-        """Analyze visual elements in document"""
+    async def process(self, document: MultiModalDocument) -> MultiModalDocument:
+        """Perform semantic analysis on visual elements"""
         try:
-            logger.info("👁️ Running Vision Agent (Multi-Modal)")
+            logger.info("🔍 Running Vision Agent (Semantic Analysis)")
             
-            if not hasattr(doc, 'agent_outputs'):
-                doc.agent_outputs = {}
+            # Analyze each visual element semantically
+            for element in document.visual_elements:
+                # Ensure metadata exists
+                if not hasattr(element, 'metadata') or element.metadata is None:
+                    element.metadata = {}
+                
+                element.metadata["semantic_label"] = self._classify_element_semantically(element)
+                element.metadata["importance_score"] = self._calculate_importance_score(element)
             
             # Analyze layout regions
-            layout_analysis = self._analyze_layout(doc.layout_regions)
-            
-            # Analyze visual elements
-            element_analysis = self._analyze_visual_elements(doc.visual_elements)
+            for region in document.layout_regions:
+                # Ensure metadata exists
+                if not hasattr(region, 'metadata') or region.metadata is None:
+                    region.metadata = {}
+                
+                region.metadata["structural_role"] = self._determine_structural_role(region)
             
             # Calculate visual statistics
-            visual_stats = self._calculate_visual_statistics(doc)
+            visual_stats = self._calculate_comprehensive_stats(document)
+            if not hasattr(document, 'processing_metadata'):
+                document.processing_metadata = {}
+            document.processing_metadata["vision_analysis"] = visual_stats
             
-            # Store results
-            doc.agent_outputs["vision"] = {
-                "status": "completed",
-                "layout_analysis": layout_analysis,
-                "element_analysis": element_analysis,
-                "visual_statistics": visual_stats,
-                "timestamp": "now"
-            }
-            
-            logger.info(f"✅ Vision analysis: {len(doc.visual_elements)} elements, {len(doc.layout_regions)} layout regions")
-            
-            return doc
+            logger.info(f"✅ Vision analysis completed: {len(document.visual_elements)} elements classified")
+            return document
             
         except Exception as e:
             logger.error(f"❌ Vision analysis failed: {e}")
-            if not hasattr(doc, 'agent_outputs'):
-                doc.agent_outputs = {}
-            doc.agent_outputs["vision"] = {"error": str(e)}
-            return doc
+            if not hasattr(document, 'errors'):
+                document.errors = []
+            document.errors.append(f"Vision agent error: {str(e)}")
+            return document
     
-    def _analyze_layout(self, layout_regions: List) -> Dict[str, Any]:
-        """Analyze document layout"""
-        analysis = {
-            "total_regions": len(layout_regions),
-            "region_types": {},
-            "page_distribution": {},
-            "average_confidence": 0.0
-        }
+    # ... rest of the methods remain the same ...
+    def _classify_element_semantically(self, element: EnhancedVisualElement) -> str:
+        """Classify visual element based on type, position, and context"""
+        element_type = element.element_type
         
-        if not layout_regions:
-            return analysis
-        
-        # Count regions by type
-        for region in layout_regions:
-            region_type = region.label
-            analysis["region_types"][region_type] = analysis["region_types"].get(region_type, 0) + 1
-            
-            # Count by page
-            page_num = region.page_num
-            analysis["page_distribution"][page_num] = analysis["page_distribution"].get(page_num, 0) + 1
-        
-        # Calculate average confidence
-        confidences = [r.confidence for r in layout_regions]
-        analysis["average_confidence"] = sum(confidences) / len(confidences)
-        
-        return analysis
-    
-    def _analyze_visual_elements(self, visual_elements: List) -> Dict[str, Any]:
-        """Analyze visual elements"""
-        analysis = {
-            "total_elements": len(visual_elements),
-            "element_types": {},
-            "confidence_distribution": {"high": 0, "medium": 0, "low": 0},
-            "page_coverage": {}
-        }
-        
-        if not visual_elements:
-            return analysis
-        
-        # Count elements by type
-        for element in visual_elements:
-            elem_type = element.element_type
-            analysis["element_types"][elem_type] = analysis["element_types"].get(elem_type, 0) + 1
-            
-            # Categorize confidence
-            conf = element.confidence
-            if conf > 0.7:
-                analysis["confidence_distribution"]["high"] += 1
-            elif conf > 0.4:
-                analysis["confidence_distribution"]["medium"] += 1
+        # Semantic mapping based on element type and position
+        if element_type == "table":
+            # Determine table type based on position
+            if element.bbox.y1 < 0.3:
+                return "header_table"
+            elif element.bbox.y1 > 0.7:
+                return "summary_table"
             else:
-                analysis["confidence_distribution"]["low"] += 1
-            
-            # Track page coverage
-            page_num = element.page_num
-            if page_num not in analysis["page_coverage"]:
-                analysis["page_coverage"][page_num] = {"elements": 0, "types": set()}
-            analysis["page_coverage"][page_num]["elements"] += 1
-            analysis["page_coverage"][page_num]["types"].add(elem_type)
+                return "data_table"
         
-        # Convert sets to lists for JSON serialization
-        for page in analysis["page_coverage"]:
-            analysis["page_coverage"][page]["types"] = list(analysis["page_coverage"][page]["types"])
+        elif element_type == "signature":
+            return "authority_marker"
         
-        return analysis
+        elif element_type in ["logo", "stamp"]:
+            return "branding_authority"
+        
+        elif element_type == "text_block":
+            # Analyze text block position and size
+            if element.bbox.x1 < 0.3:
+                return "sidebar_content"
+            elif (element.bbox.x2 - element.bbox.x1) > 0.6:
+                return "main_content"
+            else:
+                return "supporting_content"
+        
+        else:
+            return "misc_element"
     
-    def _calculate_visual_statistics(self, doc: MultiModalDocument) -> Dict[str, Any]:
-        """Calculate comprehensive visual statistics"""
-        stats = {
-            "document_complexity": 0.0,
-            "visual_balance": 0.0,
-            "element_density": 0.0,
-            "layout_coherence": 0.0
+    def _calculate_importance_score(self, element: EnhancedVisualElement) -> float:
+        """Calculate importance score (0-1) for visual element"""
+        base_score = element.confidence
+        
+        # Position-based importance (center is more important)
+        center_x = (element.bbox.x1 + element.bbox.x2) / 2
+        center_y = (element.bbox.y1 + element.bbox.y2) / 2
+        
+        # Distance from center (normalized)
+        distance_from_center = np.sqrt((center_x - 0.5)**2 + (center_y - 0.5)**2) / 0.707
+        position_score = 1.0 - distance_from_center
+        
+        # Size-based importance
+        area = (element.bbox.x2 - element.bbox.x1) * (element.bbox.y2 - element.bbox.y1)
+        size_score = min(area * 10, 1.0)  # Normalize
+        
+        # Type-based weight
+        type_weights = {
+            "signature": 1.2,
+            "table": 1.1,
+            "logo": 1.0,
+            "stamp": 0.9,
+            "text_block": 0.8,
+            "object": 0.5
         }
+        type_weight = type_weights.get(element.element_type, 0.5)
         
-        # Calculate document complexity
-        total_elements = len(doc.visual_elements) + len(doc.layout_regions)
-        total_pages = len(doc.images) if hasattr(doc, 'images') and doc.images else 1
+        # Combined score
+        importance = (base_score * 0.4 + position_score * 0.3 + size_score * 0.3) * type_weight
+        return min(importance, 1.0)
+    
+    def _determine_structural_role(self, region: LayoutRegion) -> str:
+        """Determine structural role of layout region"""
+        label = region.label.lower()
         
-        if total_pages > 0:
-            stats["element_density"] = total_elements / total_pages
+        if "header" in label:
+            return "document_header"
+        elif "footer" in label:
+            return "document_footer"
+        elif "title" in label:
+            return "title_section"
+        elif "table" in label:
+            return "tabular_data"
+        elif "text" in label or "paragraph" in label:
+            return "text_content"
+        elif "signature" in label:
+            return "signature_area"
+        else:
+            return "structural_region"
+    
+    def _calculate_comprehensive_stats(self, document: MultiModalDocument) -> Dict[str, Any]:
+        """Calculate comprehensive visual statistics"""
+        if not document.visual_elements:
+            return {"error": "No visual elements found"}
+        
+        # Element type distribution
+        type_distribution = {}
+        for element in document.visual_elements:
+            elem_type = element.element_type
+            type_distribution[elem_type] = type_distribution.get(elem_type, 0) + 1
+        
+        # Confidence statistics
+        confidences = [e.confidence for e in document.visual_elements]
+        
+        # Position analysis
+        horizontal_distribution = {"left": 0, "center": 0, "right": 0}
+        vertical_distribution = {"top": 0, "middle": 0, "bottom": 0}
+        
+        for element in document.visual_elements:
+            center_x = (element.bbox.x1 + element.bbox.x2) / 2
+            center_y = (element.bbox.y1 + element.bbox.y2) / 2
             
-            # Simple complexity metric
-            unique_element_types = len(set([e.element_type for e in doc.visual_elements]))
-            unique_layout_types = len(set([r.label for r in doc.layout_regions]))
-            stats["document_complexity"] = (unique_element_types + unique_layout_types) / 10
-        
-        # Calculate visual balance (simple heuristic)
-        if doc.visual_elements:
-            # Check if elements are distributed across pages
-            pages_with_elements = len(set([e.page_num for e in doc.visual_elements]))
-            stats["visual_balance"] = pages_with_elements / total_pages if total_pages > 0 else 0
-        
-        # Calculate layout coherence
-        if doc.layout_regions:
-            # Check if similar layout regions appear on multiple pages
-            layout_types_by_page = {}
-            for region in doc.layout_regions:
-                page = region.page_num
-                if page not in layout_types_by_page:
-                    layout_types_by_page[page] = set()
-                layout_types_by_page[page].add(region.label)
+            if center_x < 0.33:
+                horizontal_distribution["left"] += 1
+            elif center_x < 0.66:
+                horizontal_distribution["center"] += 1
+            else:
+                horizontal_distribution["right"] += 1
             
-            # Calculate similarity between pages
-            if len(layout_types_by_page) > 1:
-                common_types = set.intersection(*layout_types_by_page.values())
-                stats["layout_coherence"] = len(common_types) / len(set([r.label for r in doc.layout_regions]))
+            if center_y < 0.33:
+                vertical_distribution["top"] += 1
+            elif center_y < 0.66:
+                vertical_distribution["middle"] += 1
+            else:
+                vertical_distribution["bottom"] += 1
         
-        return stats
+        # Size statistics
+        areas = [(e.bbox.x2 - e.bbox.x1) * (e.bbox.y2 - e.bbox.y1) for e in document.visual_elements]
+        
+        return {
+            "total_elements": len(document.visual_elements),
+            "type_distribution": type_distribution,
+            "confidence_stats": {
+                "mean": float(np.mean(confidences)) if confidences else 0,
+                "std": float(np.std(confidences)) if confidences else 0,
+                "min": float(min(confidences)) if confidences else 0,
+                "max": float(max(confidences)) if confidences else 0
+            },
+            "position_analysis": {
+                "horizontal": horizontal_distribution,
+                "vertical": vertical_distribution
+            },
+            "size_analysis": {
+                "mean_area": float(np.mean(areas)) if areas else 0,
+                "total_coverage": float(sum(areas)) if areas else 0
+            },
+            "layout_regions_count": len(document.layout_regions)
+        }

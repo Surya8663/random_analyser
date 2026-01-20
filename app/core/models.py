@@ -115,6 +115,7 @@ class BoundingBox(BaseModel):
             y2=max(0.0, min(y2 / height, 1.0))
         )
 
+# In your existing models.py, update the LayoutRegion class:
 class LayoutRegion(BaseModel):
     """Layout analysis result"""
     bbox: BoundingBox
@@ -122,6 +123,7 @@ class LayoutRegion(BaseModel):
     confidence: float
     page_num: int
     text_content: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)  # ADD THIS LINE
     
     @validator('confidence')
     def validate_confidence(cls, v):
@@ -315,6 +317,7 @@ class ProcessingState(BaseModel):
 
 # ========== MULTI-MODAL DOCUMENT MODEL ==========
 
+# In your models.py, update the MultiModalDocument class:
 class MultiModalDocument(BaseModel):
     """UNIFIED DOCUMENT with BOTH text and visual data"""
     
@@ -351,10 +354,11 @@ class MultiModalDocument(BaseModel):
     field_confidences: Dict[str, float] = Field(default_factory=dict)
     temporal_consistency: Dict[str, Any] = Field(default_factory=dict)
     
-    # Validation results
-    contradictions: List[Contradiction] = Field(default_factory=list)
-    risk_score: float = Field(default=0.0, ge=0, le=1)
-    compliance_issues: List[str] = Field(default_factory=list)
+    # ADD THESE MISSING FIELDS:
+    extracted_fields: Dict[str, Any] = Field(default_factory=dict)  # ADD THIS LINE
+    contradictions: List[Contradiction] = Field(default_factory=list)  # ADD THIS LINE if missing
+    risk_score: float = Field(default=0.0, ge=0, le=1)  # ADD THIS LINE if missing
+    compliance_issues: List[str] = Field(default_factory=list)  # ADD THIS LINE if missing
     
     # Explainability results
     explanations: Dict[str, str] = Field(default_factory=dict)
@@ -371,6 +375,8 @@ class MultiModalDocument(BaseModel):
     
     class Config:
         arbitrary_types_allowed = True
+    
+    
     
     # ========== CONVERSION METHODS ==========
     
