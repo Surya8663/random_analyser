@@ -1,94 +1,118 @@
-import React, { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { 
-  FiSearch, 
-  FiFilter, 
-  FiChevronDown, 
-  FiChevronUp, 
-  FiMessageSquare,
-  FiEye,
-  FiFileText,
-  FiShuffle
-} from 'react-icons/fi'
-import { Tooltip } from 'react-tooltip'
+// src/components/RAGPanel.jsx
+import React, { useState } from 'react';
+import { FiSearch, FiFilter, FiMessageSquare, FiFileText, FiEye, FiShuffle, FiChevronDown, FiChevronUp } from 'react-icons/fi';
+import DocumentAPI from '../api/client';
 
-const RAGPanel = ({ documentId, onQuerySubmit }) => {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [isLoading, setIsLoading] = useState(false)
+const MODALITIES = [
+  { id: 'text', label: 'Text', icon: FiFileText, color: '#3b82f6' },
+  { id: 'visual', label: 'Visual', icon: FiEye, color: '#8b5cf6' },
+  { id: 'fused', label: 'Fused', icon: FiShuffle, color: '#10b981' }
+];
+
+const AGENTS = [
+  { id: 'vision_agent', label: 'Vision', color: '#8b5cf6' },
+  { id: 'text_agent', label: 'Text', color: '#3b82f6' },
+  { id: 'fusion_agent', label: 'Fusion', color: '#10b981' },
+  { id: 'reasoning_agent', label: 'Reasoning', color: '#f59e0b' }
+];
+
+const RAGPanel = ({ documentId }) => {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [searchError, setSearchError] = useState(null);
   const [filters, setFilters] = useState({
     modality: 'all',
     agent: 'all',
-    minConfidence: 0.5,
-    riskLevel: 'all'
-  })
-  const [expandedResult, setExpandedResult] = useState(null)
-  const [queryHistory, setQueryHistory] = useState([])
-  
-  const MODALITIES = [
-    { id: 'text', label: 'Text', icon: FiFileText, color: '#3b82f6' },
-    { id: 'visual', label: 'Visual', icon: FiEye, color: '#8b5cf6' },
-    { id: 'fused', label: 'Fused', icon: FiShuffle, color: '#10b981' }
-  ]
-  
-  const AGENTS = [
-    { id: 'vision_agent', label: 'Vision', color: '#8b5cf6' },
-    { id: 'text_agent', label: 'Text', color: '#3b82f6' },
-    { id: 'fusion_agent', label: 'Fusion', color: '#10b981' },
-    { id: 'reasoning_agent', label: 'Reasoning', color: '#f59e0b' }
-  ]
-  
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!query.trim() || isLoading) return
-    
-    setIsLoading(true)
-    
+    minConfidence: 0.5
+  });
+  const [expandedResult, setExpandedResult] = useState(null);
+  const [queryHistory, setQueryHistory] = useState([]);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!query.trim() || !documentId) return;
+
+    setIsLoading(true);
+    setSearchError(null);
+
     try {
-      // In production, this would call the API
-      const mockResults = generateMockResults(query)
-      setResults(mockResults)
+      const response = await DocumentAPI.queryDocument(documentId, query);
       
+      // Format response based on your backend structure
+      const formattedResults = formatResults(response, query);
+      setResults(formattedResults);
+
       // Add to query history
       setQueryHistory(prev => [
-        { query, timestamp: new Date().toISOString(), resultCount: mockResults.length },
-        ...prev.slice(0, 9)
-      ])
-      
-      // Call parent handler
-      if (onQuerySubmit) {
-        onQuerySubmit(query)
-      }
+        { 
+          query, 
+          timestamp: new Date().toISOString(), 
+          resultCount: formattedResults.length 
+        },
+        ...prev.slice(0, 4)
+      ]);
+
     } catch (error) {
-      console.error('Query failed:', error)
+      console.error('Search failed:', error);
+      setSearchError(error.message || 'Search failed. Please try again.');
+      
+      // Show mock results for demo purposes
+      const mockResults = generateMockResults(query);
+      setResults(mockResults);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
-  
+  };
+
+  const formatResults = (response, queryText) => {
+    // Adapt this based on your actual backend response structure
+    if (response.results && Array.isArray(response.results)) {
+      return response.results.map((result, index) => ({
+        id: `result_${index}`,
+        query: queryText,
+        modality: result.modality || 'text',
+        agent: result.agent || 'text_agent',
+        confidence: result.confidence || 0.8,
+        score: result.score || 0.9,
+        contentType: result.content_type || 'text',
+        content: result.content || result.text || 'No content available',
+        page: result.page || 1,
+        boundingBox: result.bbox,
+        timestamp: new Date().toISOString(),
+        reasoning: {
+          factors: result.reasoning_factors || ['semantic_similarity', 'agent_confidence'],
+          explanation: result.explanation || `Found in ${result.modality || 'text'} analysis`
+        }
+      }));
+    }
+
+    // If response structure is different, return empty array
+    return [];
+  };
+
   const generateMockResults = (queryText) => {
-    const mockResults = []
-    const modalities = ['text', 'visual', 'fused']
-    const agents = AGENTS.map(a => a.id)
-    const contentTypes = ['paragraph', 'table', 'signature', 'header', 'figure']
+    // For demo purposes only
+    const mockResults = [];
+    const contentTypes = ['paragraph', 'table', 'signature', 'header', 'figure'];
     
-    for (let i = 0; i < 8; i++) {
-      const modality = modalities[Math.floor(Math.random() * modalities.length)]
-      const agent = agents[Math.floor(Math.random() * agents.length)]
-      const confidence = Math.random() * 0.4 + 0.6 // 0.6 to 1.0
-      const contentType = contentTypes[Math.floor(Math.random() * contentTypes.length)]
+    for (let i = 0; i < 5; i++) {
+      const modality = MODALITIES[Math.floor(Math.random() * MODALITIES.length)].id;
+      const agent = AGENTS[Math.floor(Math.random() * AGENTS.length)].id;
+      const confidence = Math.random() * 0.4 + 0.6;
+      const contentType = contentTypes[Math.floor(Math.random() * contentTypes.length)];
       
       mockResults.push({
-        id: `result_${i}`,
+        id: `mock_${i}`,
         query: queryText,
         modality,
         agent,
         confidence,
-        score: Math.random() * 0.3 + 0.7, // 0.7 to 1.0
+        score: Math.random() * 0.3 + 0.7,
         contentType,
-        content: `This is sample ${contentType} content that matches your query "${queryText}". The AI found this relevant based on semantic analysis and cross-modal understanding.`,
+        content: `This is sample content that matches your query "${queryText}". Found during ${agent.replace('_agent', '')} analysis with ${(confidence * 100).toFixed(0)}% confidence.`,
         page: Math.floor(Math.random() * 5) + 1,
-        boundingBox: modality === 'visual' || modality === 'fused' ? {
+        boundingBox: modality !== 'text' ? {
           x: Math.random() * 80 + 10,
           y: Math.random() * 80 + 10,
           width: Math.random() * 30 + 10,
@@ -99,119 +123,128 @@ const RAGPanel = ({ documentId, onQuerySubmit }) => {
           factors: ['semantic_similarity', 'agent_confidence', 'cross_modal_alignment'],
           explanation: `Result ranked highly due to strong ${modality} match and ${agent} confidence.`
         }
-      })
+      });
     }
     
-    // Sort by score
-    return mockResults.sort((a, b) => b.score - a.score)
-  }
-  
+    return mockResults.sort((a, b) => b.score - a.score);
+  };
+
   const filteredResults = results.filter(result => {
     if (filters.modality !== 'all' && result.modality !== filters.modality) {
-      return false
+      return false;
     }
     if (filters.agent !== 'all' && result.agent !== filters.agent) {
-      return false
+      return false;
     }
     if (result.confidence < filters.minConfidence) {
-      return false
+      return false;
     }
-    return true
-  })
-  
+    return true;
+  });
+
   const getModalityIcon = (modality) => {
-    const mod = MODALITIES.find(m => m.id === modality)
-    return mod ? mod.icon : FiFileText
-  }
-  
+    const mod = MODALITIES.find(m => m.id === modality);
+    return mod ? mod.icon : FiFileText;
+  };
+
   const getAgentColor = (agent) => {
-    const agentConfig = AGENTS.find(a => a.id === agent)
-    return agentConfig ? agentConfig.color : '#6b7280'
-  }
-  
+    const agentConfig = AGENTS.find(a => a.id === agent);
+    return agentConfig ? agentConfig.color : '#6b7280';
+  };
+
   const getScoreColor = (score) => {
-    if (score >= 0.9) return '#10b981'
-    if (score >= 0.7) return '#f59e0b'
-    return '#ef4444'
-  }
-  
+    if (score >= 0.9) return '#10b981';
+    if (score >= 0.7) return '#f59e0b';
+    return '#ef4444';
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      modality: 'all',
+      agent: 'all',
+      minConfidence: 0.5
+    });
+  };
+
   return (
-    <div className="glass rounded-xl p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="panel rag-panel">
+      <div className="panel-header">
         <div>
-          <h2 className="text-xl font-bold gradient-text">Reasoning-Aware RAG</h2>
-          <p className="text-sm text-dark-muted">
-            Query documents with AI understanding and reasoning
+          <h3>🔍 RAG Query Interface</h3>
+          <p className="panel-subtitle">
+            {documentId ? `Document ID: ${documentId}` : 'Upload a document to start searching'}
           </p>
         </div>
-        
-        <div className="flex items-center gap-2">
-          <div className="px-3 py-1 rounded-lg bg-dark-card text-sm">
-            {results.length} results
-          </div>
+        <div className="results-count">
+          {results.length} results
         </div>
       </div>
-      
-      {/* Query input */}
-      <form onSubmit={handleSubmit} className="mb-6">
-        <div className="relative">
+
+      {/* Search form */}
+      <form onSubmit={handleSearch} className="search-form">
+        <div className="search-input-wrapper">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask about your document (e.g., 'Show me high-risk signatures' or 'What tables contain financial data?')"
-            className="w-full px-6 py-4 rounded-xl bg-dark-card border border-dark-border focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-            disabled={isLoading}
+            placeholder="Ask about your document (e.g., 'Show me signatures' or 'Find financial tables')"
+            className="search-input"
+            disabled={isLoading || !documentId}
           />
           <button
             type="submit"
-            disabled={isLoading || !query.trim()}
-            className="absolute right-3 top-3 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+            disabled={isLoading || !query.trim() || !documentId}
+            className="search-button"
           >
             {isLoading ? (
-              <div className="flex items-center gap-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+              <div className="loading-indicator">
+                <div className="spinner" />
                 Searching...
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <FiSearch className="w-5 h-5" />
-                Search
+              <div className="search-button-content">
+                <FiSearch />
+                <span>Search</span>
               </div>
             )}
           </button>
         </div>
+        
+        {!documentId && (
+          <p className="warning-message">
+            Please upload a document first to enable search
+          </p>
+        )}
       </form>
-      
-      {/* Filters */}
-      <div className="mb-6 p-4 rounded-lg bg-dark-card">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <FiFilter className="w-5 h-5" />
-            <span className="font-medium">Filters</span>
+
+      {searchError && (
+        <div className="error-banner">
+          <div className="error-content">
+            <span>{searchError}</span>
+            <small>(Showing demo data)</small>
           </div>
-          
-          <button
-            onClick={() => setFilters({
-              modality: 'all',
-              agent: 'all',
-              minConfidence: 0.5,
-              riskLevel: 'all'
-            })}
-            className="text-sm text-primary-500 hover:text-primary-400"
-          >
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="filters-section">
+        <div className="filters-header">
+          <div className="filters-title">
+            <FiFilter />
+            <span>Filters</span>
+          </div>
+          <button onClick={clearFilters} className="clear-filters">
             Clear all
           </button>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Modality filter */}
-          <div>
-            <label className="block text-sm text-dark-muted mb-2">Modality</label>
+
+        <div className="filters-grid">
+          <div className="filter-group">
+            <label>Modality</label>
             <select
               value={filters.modality}
               onChange={(e) => setFilters(prev => ({ ...prev, modality: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg bg-dark-bg border border-dark-border focus:outline-none focus:border-primary-500"
+              className="filter-select"
             >
               <option value="all">All modalities</option>
               {MODALITIES.map(mod => (
@@ -219,14 +252,13 @@ const RAGPanel = ({ documentId, onQuerySubmit }) => {
               ))}
             </select>
           </div>
-          
-          {/* Agent filter */}
-          <div>
-            <label className="block text-sm text-dark-muted mb-2">Agent</label>
+
+          <div className="filter-group">
+            <label>Agent</label>
             <select
               value={filters.agent}
               onChange={(e) => setFilters(prev => ({ ...prev, agent: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg bg-dark-bg border border-dark-border focus:outline-none focus:border-primary-500"
+              className="filter-select"
             >
               <option value="all">All agents</option>
               {AGENTS.map(agent => (
@@ -234,12 +266,9 @@ const RAGPanel = ({ documentId, onQuerySubmit }) => {
               ))}
             </select>
           </div>
-          
-          {/* Confidence filter */}
-          <div>
-            <label className="block text-sm text-dark-muted mb-2">
-              Min Confidence: {(filters.minConfidence * 100).toFixed(0)}%
-            </label>
+
+          <div className="filter-group">
+            <label>Min Confidence: {(filters.minConfidence * 100).toFixed(0)}%</label>
             <input
               type="range"
               min="0"
@@ -247,199 +276,550 @@ const RAGPanel = ({ documentId, onQuerySubmit }) => {
               step="0.1"
               value={filters.minConfidence}
               onChange={(e) => setFilters(prev => ({ ...prev, minConfidence: parseFloat(e.target.value) }))}
-              className="w-full accent-primary-500"
+              className="confidence-slider"
             />
-          </div>
-          
-          {/* Risk filter */}
-          <div>
-            <label className="block text-sm text-dark-muted mb-2">Risk Level</label>
-            <select
-              value={filters.riskLevel}
-              onChange={(e) => setFilters(prev => ({ ...prev, riskLevel: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg bg-dark-bg border border-dark-border focus:outline-none focus:border-primary-500"
-            >
-              <option value="all">All risk levels</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
           </div>
         </div>
       </div>
-      
+
       {/* Results */}
-      <div className="space-y-4">
-        <AnimatePresence>
-          {filteredResults.map((result, index) => {
-            const ModalityIcon = getModalityIcon(result.modality)
-            const agentColor = getAgentColor(result.agent)
-            const scoreColor = getScoreColor(result.score)
-            const isExpanded = expandedResult === result.id
-            
+      <div className="results-section">
+        {filteredResults.length > 0 ? (
+          filteredResults.map((result, index) => {
+            const ModalityIcon = getModalityIcon(result.modality);
+            const agentColor = getAgentColor(result.agent);
+            const scoreColor = getScoreColor(result.score);
+            const isExpanded = expandedResult === result.id;
+
             return (
-              <motion.div
-                key={result.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ delay: index * 0.05 }}
-                className="rounded-lg bg-dark-card border border-dark-border overflow-hidden"
-              >
+              <div key={result.id} className="result-card">
                 <div 
-                  className="p-4 cursor-pointer hover:bg-dark-border/50 transition-colors"
+                  className="result-header"
                   onClick={() => setExpandedResult(isExpanded ? null : result.id)}
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div 
-                          className="w-8 h-8 rounded-lg flex items-center justify-center"
-                          style={{ backgroundColor: `${agentColor}20` }}
-                        >
-                          <ModalityIcon style={{ color: agentColor }} />
-                        </div>
-                        
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium capitalize">
-                              {result.contentType}
+                  <div className="result-icon" style={{ backgroundColor: `${agentColor}20` }}>
+                    <ModalityIcon style={{ color: agentColor }} />
+                  </div>
+                  
+                  <div className="result-info">
+                    <div className="result-title">
+                      <span className="content-type">{result.contentType}</span>
+                      <span className="page-tag">Page {result.page}</span>
+                    </div>
+                    <div className="result-subtitle">
+                      via {result.agent.replace('_agent', '')} agent • {result.modality} modality
+                    </div>
+                  </div>
+
+                  <div className="result-stats">
+                    <div className="score-badge" style={{ 
+                      backgroundColor: `${scoreColor}20`,
+                      color: scoreColor
+                    }}>
+                      Score: {(result.score * 100).toFixed(0)}%
+                    </div>
+                    <div className="confidence">
+                      Conf: {(result.confidence * 100).toFixed(0)}%
+                    </div>
+                    <button className="expand-button">
+                      {isExpanded ? <FiChevronUp /> : <FiChevronDown />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="result-preview">
+                  {result.content.length > 200 ? `${result.content.slice(0, 200)}...` : result.content}
+                </div>
+
+                {isExpanded && (
+                  <div className="result-details">
+                    <div className="details-grid">
+                      <div className="detail-section">
+                        <h4>Reasoning Factors</h4>
+                        <div className="factors-list">
+                          {result.reasoning.factors.map((factor, idx) => (
+                            <span key={idx} className="factor-tag">
+                              {factor}
                             </span>
-                            <span className="text-xs px-2 py-1 rounded bg-dark-border">
-                              Page {result.page}
-                            </span>
-                          </div>
-                          <div className="text-sm text-dark-muted">
-                            via {result.agent.replace('_agent', '')} agent • {result.modality} modality
-                          </div>
+                          ))}
                         </div>
                       </div>
-                      
-                      <div className="mt-2 text-sm">
-                        {result.content.slice(0, 150)}
-                        {result.content.length > 150 && '...'}
+                      <div className="detail-section">
+                        <h4>Explanation</h4>
+                        <p>{result.reasoning.explanation}</p>
                       </div>
                     </div>
                     
-                    <div className="flex flex-col items-end gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm text-dark-muted">Score:</div>
-                        <div 
-                          className="px-2 py-1 rounded text-sm font-bold"
-                          style={{ 
-                            backgroundColor: `${scoreColor}20`,
-                            color: scoreColor
-                          }}
-                        >
-                          {(result.score * 100).toFixed(0)}%
-                        </div>
+                    {result.boundingBox && (
+                      <div className="detail-section">
+                        <h4>Visual Location</h4>
+                        <p>
+                          Bounding box at ({result.boundingBox.x.toFixed(1)}%, {result.boundingBox.y.toFixed(1)}%)
+                          • Size: {result.boundingBox.width.toFixed(1)}% × {result.boundingBox.height.toFixed(1)}%
+                        </p>
                       </div>
-                      
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm text-dark-muted">Confidence:</div>
-                        <div className="text-sm font-medium">
-                          {(result.confidence * 100).toFixed(0)}%
-                        </div>
-                      </div>
-                      
-                      <button className="p-1">
-                        {isExpanded ? (
-                          <FiChevronUp className="w-5 h-5" />
-                        ) : (
-                          <FiChevronDown className="w-5 h-5" />
-                        )}
-                      </button>
-                    </div>
+                    )}
                   </div>
-                </div>
-                
-                {/* Expanded details */}
-                <AnimatePresence>
-                  {isExpanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="border-t border-dark-border"
-                    >
-                      <div className="p-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                          <div>
-                            <h4 className="text-sm font-medium mb-2">Reasoning Factors</h4>
-                            <div className="flex flex-wrap gap-2">
-                              {result.reasoning.factors.map((factor, idx) => (
-                                <span
-                                  key={idx}
-                                  className="px-2 py-1 text-xs rounded bg-dark-border"
-                                >
-                                  {factor}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                          
-                          <div>
-                            <h4 className="text-sm font-medium mb-2">Explanation</h4>
-                            <p className="text-sm text-dark-muted">
-                              {result.reasoning.explanation}
-                            </p>
-                          </div>
-                        </div>
-                        
-                        {result.boundingBox && (
-                          <div>
-                            <h4 className="text-sm font-medium mb-2">Visual Location</h4>
-                            <div className="text-sm text-dark-muted">
-                              Bounding box at ({result.boundingBox.x.toFixed(1)}%, {result.boundingBox.y.toFixed(1)}%)
-                              • Size: {result.boundingBox.width.toFixed(1)}% × {result.boundingBox.height.toFixed(1)}%
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
-            )
-          })}
-        </AnimatePresence>
-        
-        {filteredResults.length === 0 && query && (
-          <div className="text-center py-12">
-            <FiMessageSquare className="w-12 h-12 mx-auto text-dark-muted mb-4" />
-            <h3 className="text-lg font-medium mb-2">No results found</h3>
-            <p className="text-dark-muted">
-              Try adjusting your filters or using different search terms
-            </p>
+                )}
+              </div>
+            );
+          })
+        ) : query && (
+          <div className="no-results">
+            <FiMessageSquare className="no-results-icon" />
+            <h4>No results found</h4>
+            <p>Try adjusting your filters or using different search terms</p>
           </div>
         )}
       </div>
-      
+
       {/* Query history */}
       {queryHistory.length > 0 && (
-        <div className="mt-8 pt-6 border-t border-dark-border">
-          <h3 className="font-medium mb-3">Recent Queries</h3>
-          <div className="flex flex-wrap gap-2">
-            {queryHistory.slice(0, 5).map((item, index) => (
+        <div className="query-history">
+          <h4>Recent Queries</h4>
+          <div className="history-items">
+            {queryHistory.map((item, index) => (
               <button
                 key={index}
                 onClick={() => setQuery(item.query)}
-                className="px-3 py-2 rounded-lg bg-dark-card hover:bg-dark-border transition-colors text-sm"
+                className="history-item"
               >
-                {item.query.slice(0, 30)}
-                {item.query.length > 30 && '...'}
-                <span className="ml-2 text-xs text-dark-muted">
-                  ({item.resultCount})
+                <span className="query-text">
+                  {item.query.length > 30 ? `${item.query.slice(0, 30)}...` : item.query}
                 </span>
+                <span className="result-count">({item.resultCount})</span>
               </button>
             ))}
           </div>
         </div>
       )}
-      
-      <Tooltip id="rag-tooltip" />
-    </div>
-  )
-}
 
-export default RAGPanel
+      <style jsx>{`
+        .panel {
+          background: #1e293b;
+          border-radius: 12px;
+          padding: 1.5rem;
+          border: 1px solid #334155;
+        }
+
+        .panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 1.5rem;
+        }
+
+        .panel-header h3 {
+          margin: 0 0 0.25rem 0;
+          color: #e2e8f0;
+          font-size: 1.2rem;
+        }
+
+        .panel-subtitle {
+          color: #94a3b8;
+          font-size: 0.875rem;
+          margin: 0;
+        }
+
+        .results-count {
+          background: #334155;
+          color: #cbd5e1;
+          padding: 0.25rem 0.75rem;
+          border-radius: 1rem;
+          font-size: 0.875rem;
+        }
+
+        .search-form {
+          margin-bottom: 1.5rem;
+        }
+
+        .search-input-wrapper {
+          position: relative;
+          display: flex;
+          gap: 0.5rem;
+        }
+
+        .search-input {
+          flex: 1;
+          background: #0f172a;
+          border: 1px solid #334155;
+          border-radius: 8px;
+          padding: 0.875rem 1rem;
+          color: #e2e8f0;
+          font-size: 0.95rem;
+          transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+          outline: none;
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+
+        .search-input:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .search-button {
+          background: #3b82f6;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          padding: 0 1.5rem;
+          cursor: pointer;
+          font-weight: 500;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 100px;
+          transition: background-color 0.2s;
+        }
+
+        .search-button:hover:not(:disabled) {
+          background: #2563eb;
+        }
+
+        .search-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .search-button-content {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .loading-indicator {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .spinner {
+          width: 16px;
+          height: 16px;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-top-color: white;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        .warning-message {
+          color: #f59e0b;
+          font-size: 0.875rem;
+          margin-top: 0.5rem;
+        }
+
+        .error-banner {
+          background: #fee2e2;
+          border: 1px solid #fecaca;
+          border-radius: 8px;
+          padding: 0.75rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .error-content {
+          color: #dc2626;
+          font-size: 0.875rem;
+        }
+
+        .error-content small {
+          color: #f87171;
+          display: block;
+          margin-top: 0.25rem;
+        }
+
+        .filters-section {
+          background: #0f172a;
+          border-radius: 8px;
+          padding: 1rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .filters-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1rem;
+        }
+
+        .filters-title {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          color: #cbd5e1;
+          font-weight: 500;
+        }
+
+        .clear-filters {
+          background: none;
+          border: none;
+          color: #3b82f6;
+          cursor: pointer;
+          font-size: 0.875rem;
+        }
+
+        .clear-filters:hover {
+          text-decoration: underline;
+        }
+
+        .filters-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 1rem;
+        }
+
+        .filter-group {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+
+        .filter-group label {
+          color: #94a3b8;
+          font-size: 0.875rem;
+        }
+
+        .filter-select {
+          background: #1e293b;
+          border: 1px solid #334155;
+          border-radius: 6px;
+          padding: 0.5rem;
+          color: #e2e8f0;
+          font-size: 0.875rem;
+        }
+
+        .filter-select:focus {
+          outline: none;
+          border-color: #3b82f6;
+        }
+
+        .confidence-slider {
+          width: 100%;
+          accent-color: #3b82f6;
+        }
+
+        .results-section {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+
+        .result-card {
+          background: #0f172a;
+          border: 1px solid #334155;
+          border-radius: 8px;
+          overflow: hidden;
+        }
+
+        .result-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 1rem;
+          padding: 1rem;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+
+        .result-header:hover {
+          background: rgba(255, 255, 255, 0.02);
+        }
+
+        .result-icon {
+          width: 40px;
+          height: 40px;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .result-info {
+          flex: 1;
+        }
+
+        .result-title {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          margin-bottom: 0.25rem;
+        }
+
+        .content-type {
+          color: #e2e8f0;
+          font-weight: 500;
+          text-transform: capitalize;
+        }
+
+        .page-tag {
+          background: #334155;
+          color: #cbd5e1;
+          padding: 0.125rem 0.5rem;
+          border-radius: 4px;
+          font-size: 0.75rem;
+        }
+
+        .result-subtitle {
+          color: #94a3b8;
+          font-size: 0.875rem;
+        }
+
+        .result-stats {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 0.25rem;
+        }
+
+        .score-badge {
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+
+        .confidence {
+          color: #94a3b8;
+          font-size: 0.875rem;
+        }
+
+        .expand-button {
+          background: none;
+          border: none;
+          color: #94a3b8;
+          cursor: pointer;
+          padding: 0.25rem;
+        }
+
+        .result-preview {
+          padding: 0 1rem 1rem 1rem;
+          color: #cbd5e1;
+          font-size: 0.875rem;
+          line-height: 1.5;
+        }
+
+        .result-details {
+          border-top: 1px solid #334155;
+          padding: 1rem;
+          background: rgba(255, 255, 255, 0.01);
+        }
+
+        .details-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1.5rem;
+          margin-bottom: 1rem;
+        }
+
+        .detail-section h4 {
+          color: #e2e8f0;
+          font-size: 0.875rem;
+          margin: 0 0 0.5rem 0;
+        }
+
+        .factors-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.25rem;
+        }
+
+        .factor-tag {
+          background: #334155;
+          color: #cbd5e1;
+          padding: 0.125rem 0.5rem;
+          border-radius: 4px;
+          font-size: 0.75rem;
+        }
+
+        .detail-section p {
+          color: #94a3b8;
+          font-size: 0.875rem;
+          line-height: 1.5;
+          margin: 0;
+        }
+
+        .no-results {
+          text-align: center;
+          padding: 3rem 1rem;
+          color: #64748b;
+        }
+
+        .no-results-icon {
+          width: 48px;
+          height: 48px;
+          margin: 0 auto 1rem;
+          display: block;
+        }
+
+        .no-results h4 {
+          color: #94a3b8;
+          margin: 0 0 0.5rem 0;
+        }
+
+        .no-results p {
+          color: #64748b;
+          margin: 0;
+          font-size: 0.875rem;
+        }
+
+        .query-history {
+          margin-top: 1.5rem;
+          padding-top: 1.5rem;
+          border-top: 1px solid #334155;
+        }
+
+        .query-history h4 {
+          color: #e2e8f0;
+          font-size: 0.875rem;
+          margin: 0 0 0.75rem 0;
+        }
+
+        .history-items {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+
+        .history-item {
+          background: #0f172a;
+          border: 1px solid #334155;
+          border-radius: 6px;
+          padding: 0.5rem 0.75rem;
+          color: #cbd5e1;
+          font-size: 0.875rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          transition: all 0.2s;
+        }
+
+        .history-item:hover {
+          background: #334155;
+          border-color: #475569;
+        }
+
+        .query-text {
+          max-width: 200px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .result-count {
+          color: #94a3b8;
+          font-size: 0.75rem;
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default RAGPanel;

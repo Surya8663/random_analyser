@@ -1,9 +1,0 @@
-{
-  "success": false,
-  "error": "\"ProcessingState\" object has no field \"extracted_text\"",
-  "document_id": "75e6c760-defb-43c2-b9bf-37239c20d998",
-  "agent_outputs": {},
-  "errors": [
-    "\"ProcessingState\" object has no field \"extracted_text\""
-  ]
-}

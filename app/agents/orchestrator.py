@@ -68,6 +68,10 @@ class Phase3Orchestrator:
             
             for name, agent in agents:
                 try:
+                    # Log agent selection and routing decision
+                    logger.info(f"📋 Agent selected: {name} for document {document.document_id}")
+                    logger.info(f"🔄 Routing decision: Sequential execution (pre-defined workflow)")
+                    
                     # Set provenance tracker for agent
                     if hasattr(agent, 'set_provenance_tracker'):
                         agent.set_provenance_tracker(provenance_tracker)
@@ -128,6 +132,9 @@ class Phase3Orchestrator:
     async def process_document(self, document: MultiModalDocument) -> Dict[str, Any]:
         """Process document and return structured results with explainability"""
         try:
+            # Log the start of document processing
+            logger.info(f"📄 Processing document {document.document_id} through orchestrator")
+            
             # Execute workflow
             result_doc = await self.process(document)
             
@@ -189,6 +196,8 @@ class Phase3Orchestrator:
                     "explainability": result_doc.processing_metadata.get("explainability_report", {}),
                     "evaluation": result_doc.evaluation_report.dict() if hasattr(result_doc, 'evaluation_report') and result_doc.evaluation_report else None
                 }
+            
+            logger.info(f"✅ Document {document.document_id} processing completed: success={response['success']}")
             
             return response
             

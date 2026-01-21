@@ -1,0 +1,147 @@
+{
+  "document_id": "7f9fae14-af11-4682-8db5-86a4e1eb7869",
+  "generated_at": "2026-01-21T19:09:20.492500",
+  "processing_summary": {
+    "total_pages": 2,
+    "text_length": 4846,
+    "visual_elements": 168,
+    "extracted_fields": 2,
+    "processing_time_seconds": 0.0,
+    "errors_count": 0,
+    "contradictions_count": 2
+  },
+  "field_explanations": {
+    "document_id": {
+      "value": "7f9fae14-af11-4682-8db5-86a4e1eb7869",
+      "type": "text",
+      "confidence": 1.0,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "metadata"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "system_generated",
+      "source_modality": "metadata",
+      "reasoning": "System-generated document ID",
+      "source_page": null
+    },
+    "visual_text_block_count": {
+      "value": 168,
+      "type": "integer",
+      "confidence": 0.9,
+      "final_source": "FusionAgent",
+      "modality_sources": [
+        "visual"
+      ],
+      "provenance_count": 1,
+      "extraction_method": "visual_detection",
+      "source_modality": "visual",
+      "reasoning": "Detected from visual analysis: visual_text_block_count",
+      "source_page": null
+    }
+  },
+  "agent_contributions": {
+    "FusionAgent": {
+      "field_count": 2,
+      "modalities": [
+        "metadata",
+        "visual"
+      ],
+      "average_confidence": 0.95,
+      "unique_fields": [
+        "visual_text_block_count",
+        "document_id"
+      ]
+    }
+  },
+  "modality_analysis": {
+    "text": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    },
+    "visual": {
+      "field_count": 1,
+      "average_confidence": 0.9
+    },
+    "fusion": {
+      "field_count": 0,
+      "average_confidence": 0.0
+    },
+    "metadata": {
+      "field_count": 1,
+      "average_confidence": 1.0
+    }
+  },
+  "decision_points": [
+    {
+      "field": "visual_elements vs text_alignment",
+      "decision_type": "contradiction_resolution",
+      "contradiction_type": "chart_text_conflict",
+      "severity": "medium",
+      "explanation": "Visual elements detected but no text alignment found",
+      "resolution": "Check OCR quality or adjust alignment thresholds"
+    },
+    {
+      "field": "names_count vs names_unique",
+      "decision_type": "contradiction_resolution",
+      "contradiction_type": "data_type_mismatch",
+      "severity": "low",
+      "explanation": "Multiple names values found: 43 total, 43 unique",
+      "resolution": "Verify which names value is correct"
+    }
+  ],
+  "confidence_analysis": {
+    "average": 0.95,
+    "min": 0.9,
+    "max": 1.0,
+    "std": 0.04999999999999999,
+    "distribution": {
+      "0.9-1.0": 1
+    }
+  },
+  "provenance_timeline": [
+    {
+      "agent": "VisionAgent",
+      "start": "2026-01-21T19:09:20.049365",
+      "end": "2026-01-21T19:09:20.050486",
+      "duration": 0.001121,
+      "fields_extracted": [],
+      "errors": []
+    },
+    {
+      "agent": "TextAgent",
+      "start": "2026-01-21T19:09:20.160567",
+      "end": "2026-01-21T19:09:20.163648",
+      "duration": 0.003081,
+      "fields_extracted": [
+        "names_0",
+        "names_1",
+        "names_2",
+        "names_3",
+        "names_4"
+      ],
+      "errors": []
+    },
+    {
+      "agent": "FusionAgent",
+      "start": "2026-01-21T19:09:20.269582",
+      "end": "2026-01-21T19:09:20.272516",
+      "duration": 0.002934,
+      "fields_extracted": [],
+      "errors": []
+    }
+  ],
+  "cross_modality_insights": {
+    "modality_distribution": {
+      "text": 5,
+      "metadata": 1,
+      "visual": 1
+    },
+    "agent_modality_distribution": {
+      "TextAgent_text": 5,
+      "FusionAgent_metadata": 1,
+      "FusionAgent_visual": 1
+    },
+    "fields_with_multiple_modalities": 0
+  }
+}

@@ -4,6 +4,8 @@ from app.agents.base_agent import BaseAgent
 from app.core.models import MultiModalDocument, EnhancedVisualElement, LayoutRegion
 from app.utils.logger import setup_logger
 import numpy as np
+from pathlib import Path
+import os
 
 logger = setup_logger(__name__)
 
@@ -13,11 +15,64 @@ class VisionAgent(BaseAgent):
     def __init__(self):
         super().__init__()
         self._accepts_multi_modal = True
+        
+        # Robust YOLO model loading with path-safe approach
+        try:
+            from ultralytics import YOLO
+            
+            # Get the project root directory (3 levels up from this file)
+            base_dir = Path(__file__).resolve().parent.parent.parent
+            
+            # Try multiple possible locations for the model
+            possible_paths = [
+                base_dir / "yolov8n.pt",
+                base_dir / "models" / "yolov8n.pt",
+                base_dir / "app" / "models" / "yolov8n.pt",
+                Path("/app/yolov8n.pt"),  # Docker container path
+                Path("/models/yolov8n.pt"),  # Alternative Docker path
+                Path("yolov8n.pt"),  # Current working directory as fallback
+            ]
+            
+            model_path = None
+            for path in possible_paths:
+                if path.exists():
+                    model_path = path
+                    logger.info(f"✅ Found YOLO model at: {model_path}")
+                    break
+            
+            if model_path:
+                self.model = YOLO(str(model_path))
+                logger.info(f"✅ YOLO model loaded successfully from {model_path}")
+            else:
+                logger.warning("⚠️ YOLO model file not found in any expected location")
+                logger.info("📁 Searching for .pt files in project directory...")
+                
+                # Search for any .pt file in the project
+                pt_files = list(base_dir.rglob("*.pt"))
+                if pt_files:
+                    model_path = pt_files[0]
+                    self.model = YOLO(str(model_path))
+                    logger.info(f"✅ Using alternative YOLO model from: {model_path}")
+                else:
+                    logger.warning("❌ No YOLO model files found. Vision detection will be limited.")
+                    self.model = None
+        except ImportError as e:
+            logger.warning(f"⚠️ YOLO not available: {e}")
+            self.model = None
+        except Exception as e:
+            logger.error(f"❌ YOLO model loading failed: {e}")
+            self.model = None
     
     async def process(self, document: MultiModalDocument) -> MultiModalDocument:
         """Perform semantic analysis on visual elements"""
         try:
             logger.info("🔍 Running Vision Agent (Semantic Analysis)")
+            
+            # Log model availability
+            if self.model:
+                logger.info("✅ YOLO model available for object detection")
+            else:
+                logger.info("ℹ️ YOLO model not available, using semantic analysis only")
             
             # Record agent start
             if self._provenance_tracker:

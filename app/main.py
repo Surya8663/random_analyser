@@ -120,8 +120,7 @@ except ImportError as e:
     logger.warning("⚠️ Creating minimal API endpoints")
     
     # Create minimal API endpoints
-    from fastapi import APIRouter, UploadFile, File, BackgroundTasks
-    from typing import List
+    from fastapi import APIRouter, UploadFile, File
     import uuid
     import shutil
     import os
@@ -130,52 +129,75 @@ except ImportError as e:
     
     @router.post("/upload")
     async def upload_document(
-        background_tasks: BackgroundTasks,
         file: UploadFile = File(...)
     ):
         """Upload a document for processing"""
         try:
+            logger.info(f"📤 Upload endpoint called for file: {file.filename}")
+            
+            # Define allowed extensions
+            allowed_extensions = ['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.txt', '.doc']
+            
             # Validate file type
             file_ext = os.path.splitext(file.filename)[1].lower()
-            if file_ext not in settings.ALLOWED_EXTENSIONS:
+            if not file_ext:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"File type {file_ext} not supported"
+                    detail="File has no extension"
+                )
+            
+            if file_ext not in allowed_extensions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File type {file_ext} not supported. Allowed: {allowed_extensions}"
                 )
             
             # Generate document ID
             document_id = str(uuid.uuid4())
+            logger.info(f"📄 Generated document ID: {document_id}")
             
             # Save file
             upload_dir = os.path.join(settings.UPLOAD_DIR, document_id)
             os.makedirs(upload_dir, exist_ok=True)
             
             file_path = os.path.join(upload_dir, f"original{file_ext}")
+            logger.info(f"💾 Saving file to: {file_path}")
+            
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
+            
+            logger.info(f"✅ File uploaded successfully: {document_id}")
             
             return {
                 "success": True,
                 "document_id": document_id,
                 "message": "Document uploaded successfully",
-                "filename": file.filename
+                "filename": file.filename,
+                "file_size": os.path.getsize(file_path) if os.path.exists(file_path) else 0
             }
             
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"❌ Upload failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
     
     @router.get("/status/{document_id}")
     async def get_status(document_id: str):
         """Get processing status"""
+        logger.info(f"📊 Status requested for document: {document_id}")
         return {
             "document_id": document_id,
             "status": "uploaded",
-            "message": "Document uploaded, processing not implemented"
+            "message": "Document uploaded, processing not implemented",
+            "processing_steps": [],
+            "progress": 0
         }
     
     @router.get("/results/{document_id}")
     async def get_results(document_id: str):
         """Get processing results"""
+        logger.info(f"📄 Results requested for document: {document_id}")
         return {
             "document_id": document_id,
             "success": False,
@@ -186,6 +208,7 @@ except ImportError as e:
     @router.post("/query")
     async def query_document(query_request: dict):
         """Query document"""
+        logger.info(f"🔍 Query received: {query_request}")
         return {
             "success": False,
             "message": "Query system not implemented in minimal mode",
@@ -194,6 +217,13 @@ except ImportError as e:
     
     app.include_router(router, prefix="/api/v1")
     logger.info("✅ Minimal API router mounted")
+    
+    # Debug: List all routes
+    logger.info("🔍 Registered API routes:")
+    for route in app.routes:
+        if hasattr(route, "path"):
+            methods = getattr(route, "methods", ["ANY"])
+            logger.info(f"  {methods} {route.path}")
 
 # Health check endpoints
 @app.get("/")
@@ -206,20 +236,23 @@ async def root():
             "mode": "full" if 'api_router' in locals() else "minimal"
         }
         
+        # List all endpoints
+        endpoints = {}
+        for route in app.routes:
+            if hasattr(route, "path"):
+                path = route.path
+                if path.startswith("/api/v1"):
+                    endpoints[path] = getattr(route, "methods", ["ANY"])
+        
         return {
             "service": settings.APP_NAME,
             "version": settings.VERSION,
             "status": "operational",
             "timestamp": datetime.now().isoformat(),
             "services": services_status,
-            "endpoints": {
-                "upload": "/api/v1/upload",
-                "status": "/api/v1/status/{document_id}",
-                "results": "/api/v1/results/{document_id}",
-                "query": "/api/v1/query",
-                "health": "/health",
-                "docs": "/docs"
-            }
+            "endpoints": endpoints,
+            "upload_dir": settings.UPLOAD_DIR,
+            "environment": settings.ENVIRONMENT
         }
     except Exception as e:
         logger.error(f"Root endpoint error: {e}")
@@ -229,13 +262,44 @@ async def root():
 async def health_check():
     """Health check endpoint for monitoring"""
     try:
+        # Get available agents
+        available_agents = []
+        try:
+            # Try to import agents to check availability
+            agent_modules = ['vision_agent', 'text_agent', 'fusion_agent', 'reasoning_agent']
+            for agent in agent_modules:
+                try:
+                    __import__(f'app.agents.{agent}')
+                    available_agents.append(agent)
+                except ImportError:
+                    pass
+        except Exception as e:
+            logger.warning(f"Agent check failed: {e}")
+        
+        # Get RAG layers
+        rag_layers = []
+        try:
+            rag_modules = ['retriever', 'indexer', 'embedder']
+            for rag in rag_modules:
+                try:
+                    __import__(f'app.rag.{rag}')
+                    rag_layers.append(rag)
+                except ImportError:
+                    pass
+        except Exception as e:
+            logger.warning(f"RAG check failed: {e}")
+        
         return {
-            "status": "healthy",
+            "status": "ok",
             "service": settings.APP_NAME,
             "version": settings.VERSION,
             "timestamp": datetime.now().isoformat(),
             "environment": settings.ENVIRONMENT,
-            "upload_dir_exists": os.path.exists(settings.UPLOAD_DIR)
+            "upload_dir_exists": os.path.exists(settings.UPLOAD_DIR),
+            "upload_dir": settings.UPLOAD_DIR,
+            "agents": available_agents,
+            "rag_layers": rag_layers,
+            "mode": "full" if 'api_router' in locals() else "minimal"
         }
     except Exception as e:
         logger.error(f"Health check error: {e}")
